@@ -101,9 +101,9 @@ def fetch_videos_by_genres(genre_ids, hits):
         print(f"  -> API returned {len(items)} items")
         for i in items:
             title = i.get("title", "").strip()
-                        aff_url = i.get("affiliateURL", "")
+            aff_url = i.get("affiliateURL", "")
             # Detail page URL: strip query params from affiliateURL
-            detail_url = aff_url.split('?')[0]("affiliateURL", "")
+            detail_url = aff_url.split('?')[0]
             img_info = i.get("imageURL", {}) or {}
             main_img = img_info.get("large") or img_info.get("small") or ""
             # Try fetch_detail, fallback on API data
