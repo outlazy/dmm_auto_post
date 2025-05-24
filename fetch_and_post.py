@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
+from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
 # ───────────────────────────────────────────────────────────
@@ -56,12 +57,11 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
 def fetch_detail(detail_url: str, session: requests.Session):
     res = fetch_page(detail_url, session)
     soup = BeautifulSoup(res.text, "lxml")
-    # 説明文（.mg-b20 lh4 内のテキスト）
-    desc_container = soup.select_one("div.mg-b20.lh4")
-    description = desc_container.get_text(strip=True) if desc_container else "(説明文なし)"
-    # サンプル画像
+    # 説明文取得
+    desc_el = soup.select_one("div.mg-b20.lh4")
+    description = desc_el.get_text(strip=True) if desc_el else "(説明文なし)"
+    # サンプル画像取得
     samples = []
-    # サンプル画像ブロック内のaタグを取得
     for a in soup.select("#sample-image-block a[id^=sample-image]"):
         img = a.find("img")
         if img and img.get("src"):
@@ -98,17 +98,12 @@ def fetch_videos_by_genres(genre_ids, hits):
         items = resp.json().get("result", {}).get("items", [])
         print(f"  -> API returned {len(items)} items")
         for i in items:
-            # 基本メタ
             title = i.get("title", "").strip()
             detail_url = i.get("URL", "").split('?')[0]
             aff_url = i.get("affiliateURL", "")
-            # API画像
             img_info = i.get("imageURL", {}) or {}
             main_img = img_info.get("large") or img_info.get("small") or ""
-            # 詳細ページから説明・サンプル抽出
             description, samples = fetch_detail(detail_url, session)
-            # 避ける: 発売前チェック
-            # サンプルなしでも投稿
             all_items.append({
                 "title":       title,
                 "url":         aff_url,
@@ -118,27 +113,35 @@ def fetch_videos_by_genres(genre_ids, hits):
                 "genres":      [g.get("name") for g in i.get("genre", [])],
                 "actors":      [a.get("name") for a in i.get("actor", [])]
             })
-            print(f"  ■ Fetched: {title} (samples:{len(samples)})")
+            print(f"  ■ Fetched: {title}, samples:{len(samples)}")
             time.sleep(1)
     print(f"=== Total fetched {len(all_items)} videos ===")
     return all_items
 
 # ───────────────────────────────────────────────────────────
-# WordPressに投稿
+# WordPressに投稿（重複チェック付き）
 # ───────────────────────────────────────────────────────────
+
 def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    # アイキャッチ
+    # 重複チェック: タイトルで検索
+    existing = wp.call(GetPosts({'post_status': 'publish', 's': item['title']}))
+    for p in existing:
+        if p.title == item['title']:
+            print(f"→ Skipping duplicate: {item['title']}")
+            return
+    # アイキャッチ画像アップロード
     img_data = requests.get(item["image_url"]).content
     media_data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg", "bits": xmlrpc_client.Binary(img_data)}
     media_item = media.UploadFile(media_data)
     resp = wp.call(media_item)
     attach_url = resp["url"]
     attach_id  = resp["id"]
-    # 本文作成
-    html = [f'<p><a href="{item['url']}" target="_blank"><img src="{attach_url}" alt="{item['title']}"/></a></p>',
-            f'<p>{item['description']}</p>']
+    # 本文組み立て
+    html = []
+    html.append(f'<p><a href="{item['url']}" target="_blank"><img src="{attach_url}" alt="{item['title']}"/></a></p>')
+    html.append(f'<p>{item['description']}</p>')
     for s in item.get("samples", []):
         html.append(f'<p><img src="{s}" alt="サンプル画像"/></p>')
     html.append(f'<p><a href="{item['url']}" target="_blank">▶ 詳細・購入はこちら</a></p>')
@@ -154,6 +157,7 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 # メイン処理
 # ───────────────────────────────────────────────────────────
+
 def main():
     print("=== Job start ===")
     videos = fetch_videos_by_genres(GENRE_IDS, HITS)
