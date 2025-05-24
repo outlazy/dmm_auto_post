@@ -28,12 +28,12 @@ def fetch_videos_by_genre(genre_id, hits):
     params = {
         "api_id":        API_ID,
         "affiliate_id":  AFFILIATE_ID,
-        "site":          "FANZA",    # AV動画は FANZA サイト
+        "site":          "DMM.R18",   # アダルトは DMM.R18 を指定
         "service":       "digital",
         "floor":         "videoa",
         "mono_genre_id": genre_id,
         "hits":          hits,
-        "sort":          "date",     # 新着順
+        "sort":          "date",      # 新着順
         "output":        "json"
     }
     print(f"=== Fetching genre {genre_id} ({hits}件) ===")
