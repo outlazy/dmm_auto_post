@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# dmm_video_auto_post.py
+# fetch_and_post.py
 
 import os
 import time
@@ -9,21 +9,21 @@ from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 
-# Load environment variables from .env or GitHub Secrets
+# 環境変数読み込み (.env または GitHub Secrets)
 load_dotenv()
 
-# Configuration
+# 設定
 AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
 LIST_URL     = "https://video.dmm.co.jp/av/list/?genre=1034"
 HITS         = int(os.getenv("HITS", 5))
 USER_AGENT   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
 def fetch_page(url: str, session: requests.Session) -> requests.Response:
-    """Fetch a page, handling DMM age-check if encountered."""
+    """ページ取得（年齢確認フォーム対応付き）"""
     headers = {"User-Agent": USER_AGENT}
     res = session.get(url, headers=headers)
     if "age_check" in res.url:
-        # submit the age-check form
+        # 年齢確認フォームをサブミット
         soup = BeautifulSoup(res.text, "lxml")
         form = soup.find("form")
         action = form["action"]
@@ -34,7 +34,8 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
     return res
 
 def fetch_videos_from_html() -> list[dict]:
-    """Scrape the listing page and then each detail page for metadata."""
+    """一覧ページをスクレイピングし、詳細ページも回って metadata 取得"""
+    print("=== Start fetching videos ===")
     session = requests.Session()
     listing = fetch_page(LIST_URL, session)
     soup = BeautifulSoup(listing.text, "lxml")
@@ -48,11 +49,11 @@ def fetch_videos_from_html() -> list[dict]:
         img = card.select_one("img")
         img_url = img.get("data-src") or img.get("src")
 
-        # Fetch detail page
+        # 詳細ページ取得
         detail = fetch_page(link, session)
         ds = BeautifulSoup(detail.text, "lxml")
 
-        # Extract genres and actors
+        # ジャンル・出演者抽出
         genres, actors = [], []
         for li in ds.select(".mg-b20 li"):
             label = li.select_one(".label").get_text(strip=True)
@@ -62,11 +63,11 @@ def fetch_videos_from_html() -> list[dict]:
             elif "出演" in label or "女優" in label:
                 actors = [a.strip() for a in text.split(",")]
 
-        # Extract description
+        # 説明文抽出
         desc_el = ds.select_one("#module-video-intro .text") or ds.select_one(".text")
         description = desc_el.get_text(strip=True) if desc_el else ""
 
-        # Build affiliate URL
+        # アフィリエイトリンク生成
         aff_url = f"{link}?i3_ref=list&i3_ord={idx}&affiliate_id={AFFILIATE_ID}"
 
         items.append({
@@ -78,19 +79,22 @@ def fetch_videos_from_html() -> list[dict]:
             "actors":      actors
         })
 
-        time.sleep(1)  # throttle requests
+        print(f"  ■ Fetched [{idx}]: {title}")
+        time.sleep(1)  # サイト負荷軽減
 
+    print(f"=== Finished fetching {len(items)} videos ===")
     return items
 
 def post_to_wp(item: dict):
-    """Upload thumbnail, create and publish a WordPress post."""
+    """WordPress に投稿（画像アップロード→投稿作成）"""
+    print(f"--> Posting: {item['title']}")
     client = Client(
         os.getenv("WP_URL"),
         os.getenv("WP_USER"),
         os.getenv("WP_PASS")
     )
 
-    # 1) Upload thumbnail
+    # 画像アップロード
     img_data = requests.get(item["image_url"], headers={"User-Agent": USER_AGENT}).content
     data = {
         "name": os.path.basename(item["image_url"]),
@@ -99,7 +103,7 @@ def post_to_wp(item: dict):
     media_item = media.UploadFile(data, img_data)
     res = client.call(media_item)
 
-    # 2) Create post
+    # 投稿作成
     post = WordPressPost()
     post.title = item["title"]
     post.content = (
@@ -116,15 +120,17 @@ def post_to_wp(item: dict):
     post.post_status = "publish"
 
     client.call(posts.NewPost(post))
-    print(f"Published: {item['title']}")
+    print(f"✔ Posted: {item['title']}")
 
 def main():
+    print("=== Job start ===")
     videos = fetch_videos_from_html()
     for vid in videos:
         try:
             post_to_wp(vid)
         except Exception as e:
-            print(f"Error posting {vid['title']}: {e}")
+            print(f"✖ Error posting {vid['title']}: {e}")
+    print("=== Job finished ===")
 
 if __name__ == "__main__":
     main()
