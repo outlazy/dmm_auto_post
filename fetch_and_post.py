@@ -17,13 +17,11 @@ AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
 WP_URL       = os.getenv("WP_URL")
 WP_USER      = os.getenv("WP_USER")
 WP_PASS      = os.getenv("WP_PASS")
+GENRE_IDS    = [1034, 8503]
+HITS         = int(os.getenv("HITS", 5))
 
 if not API_ID or not AFFILIATE_ID:
-    raise RuntimeError("環境変数 DMM_API_ID / DMM_AFFILIATE_ID が設定されていません")
-
-# 複数取得したいジャンルをリストで指定
-GENRE_IDS    = [1034, 8503]
-HITS         = int(os.getenv("HITS", 5))  # 1ジャンルあたりの取得件数
+    raise RuntimeError("DMM_API_ID / DMM_AFFILIATE_ID を環境変数で設定してください")
 
 # ───────────────────────────────────────────────────────────
 # DMM(FANZA)アフィリエイトAPIから動画情報を取得
@@ -33,12 +31,12 @@ def fetch_videos_by_genre(genre_id: int, hits: int) -> list[dict]:
     params = {
         "api_id":        API_ID,
         "affiliate_id":  AFFILIATE_ID,
-        "site":          "FANZA",      # 成人動画はFANZA
+        "site":          "FANZA",
         "service":       "digital",
         "floor":         "videoa",
         "mono_genre_id": genre_id,
         "hits":          hits,
-        "sort":          "date",       # 新着順
+        "sort":          "date",
         "output":        "json"
     }
     print(f"=== Fetching genre {genre_id} ({hits}件) ===")
@@ -48,15 +46,24 @@ def fetch_videos_by_genre(genre_id: int, hits: int) -> list[dict]:
     except requests.exceptions.HTTPError as e:
         print(f"[Error] genre {genre_id} API request failed: {e}")
         return []
+
     data = resp.json().get("result", {})
     items = data.get("items", [])
-    print(f"  -> Fetched {len(items)} items for genre {genre_id}")
+    print(f"  -> API returned {len(items)} items")
+
     videos = []
     for i in items:
+        # JSON の imageURL オブジェクトから large または small を取得
+        image_info = i.get("imageURL", {}) or {}
+        img_url = image_info.get("large") or image_info.get("small") or ""
+        if not img_url:
+            print(f"[Warning] No image for '{i.get('title')}', skipping")
+            continue
+
         videos.append({
             "title":       i.get("title", "").strip(),
             "url":         i.get("affiliateURL", ""),
-            "image_url":   i.get("largeImageURL", ""),
+            "image_url":   img_url,
             "description": i.get("description", "").strip(),
             "genres":      [g.get("name") for g in i.get("genre", [])],
             "actors":      [a.get("name") for a in i.get("actor", [])]
@@ -70,13 +77,11 @@ def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
     wp = Client(WP_URL, WP_USER, WP_PASS)
 
-    # サムネイル画像アップロード
     img_data = requests.get(item["image_url"]).content
     data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg"}
     media_item = media.UploadFile(data, img_data)
     resp = wp.call(media_item)
 
-    # 投稿作成
     post = WordPressPost()
     post.title = item["title"]
     post.content = (
@@ -103,9 +108,9 @@ def main():
     for gid in GENRE_IDS:
         vids = fetch_videos_by_genre(gid, HITS)
         all_videos.extend(vids)
-        time.sleep(1)  # API連続アクセス抑制
-    print(f"=== Total videos to post: {len(all_videos)} ===")
+        time.sleep(1)
 
+    print(f"=== Total videos to post: {len(all_videos)} ===")
     for vid in all_videos:
         try:
             post_to_wp(vid)
