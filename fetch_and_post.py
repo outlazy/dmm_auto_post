@@ -101,14 +101,19 @@ def fetch_videos_by_genres(genre_ids, hits):
         print(f"  -> API returned {len(items)} items")
         for i in items:
             title = i.get("title", "").strip()
+            detail_url = i.get("URL", "")  # Use API detail URL
             aff_url = i.get("affiliateURL", "")
-            detail_url = aff_url.split('?')[0]
             img_info = i.get("imageURL", {}) or {}
             main_img = img_info.get("large") or img_info.get("small") or ""
-            description_html, samples_html = fetch_detail(detail_url, session)
+            # Try fetch_detail, fallback on API data
+            try:
+                desc_html, samples_html = fetch_detail(detail_url, session)
+            except Exception as e:
+                print(f"[Warn] detail fetch failed for {title}: {e}")
+                desc_html, samples_html = "", []
             api_desc = i.get("description", "").strip()
-            description = description_html or api_desc or "(説明文なし)"
-            samples = samples_html
+            description = desc_html or api_desc or "(説明文なし)"
+            samples = samples_html or []
             if not samples:
                 sample_api = i.get("sampleImageURL", {}) or {}
                 for val in sample_api.values():
@@ -142,12 +147,10 @@ def post_to_wp(item: dict):
     img_data = requests.get(item["image_url"]).content
     media_data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg", "bits": xmlrpc_client.Binary(img_data)}
     resp_media = wp.call(media.UploadFile(media_data))
-    attach_url = resp_media["url"]
     attach_id  = resp_media["id"]
-    html = [
-        f'<p><a href="{item['url']}" target="_blank"><img src="{attach_url}" alt="{item['title']}"/></a></p>',
-        f'<p>{item['description']}</p>'
-    ]
+    # Build HTML
+    html = [f'<p><a href="{item['url']}" target="_blank"><img src="{resp_media["url"]}" alt="{item['title']}"/></a></p>',
+            f'<p>{item['description']}</p>']
     for s in item.get("samples", []):
         html.append(f'<p><img src="{s}" alt="サンプル画像"/></p>')
     html.append(f'<p><a href="{item['url']}" target="_blank">▶ 詳細・購入はこちら</a></p>')
