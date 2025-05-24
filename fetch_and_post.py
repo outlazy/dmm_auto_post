@@ -1,4 +1,3 @@
-```python
 #!/usr/bin/env python3
 # fetch_and_post.py
 
@@ -106,7 +105,7 @@ def fetch_videos_from_pages(urls):
                 "image_url":   img_url,
                 "description": description,
                 "samples":     samples,
-                "genres":      [],  # 必要に応じて追加
+                "genres":      [],
                 "actors":      []
             })
             print(f"  ■ Fetched [{idx}]: {title}")
@@ -133,10 +132,11 @@ def post_to_wp(item: dict):
     attach_id  = resp["id"]
 
     # HTML組み立て
-    html = [f'<p><a href="{item['url']}" target="_blank">'
-            f'<img src="{attach_url}" alt="{item['title']}"/></a></p>',
-            f'<p>{item['description']}</p>']
-    # サンプル画像を本文下側、リンクの上に
+    html = [
+        f'<p><a href="{item['url']}" target="_blank">'
+        f'<img src="{attach_url}" alt="{item['title']}"/></a></p>',
+        f'<p>{item['description']}</p>'
+    ]
     for s in item.get("samples", []):
         html.append(f'<p><img src="{s}" alt="サンプル画像"/></p>')
     html.append(f'<p><a href="{item['url']}" target="_blank">▶ 詳細・購入はこちら</a></p>')
@@ -166,4 +166,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
