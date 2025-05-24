@@ -102,14 +102,11 @@ def fetch_videos_by_genres(genre_ids, hits):
         for i in items:
             title = i.get("title", "").strip()
             aff_url = i.get("affiliateURL", "")
-            # Detail page URL
-            detail_url = ""
-            url_info = i.get("URL") or {}
-            if isinstance(url_info, dict):
-                detail_url = url_info.get("list") or url_info.get("pc") or ""
+                        # Detail page URL: use affiliateURL trimmed of query
+            detail_url = aff_url.split('?')[0]
 
             # Main image
-            img_info = i.get("imageURL", {}) or {}
+            img_info = i.get("imageURL", {}) or {}("imageURL", {}) or {}
             main_img = img_info.get("large") or img_info.get("small") or ""
 
             # Scrape detail
