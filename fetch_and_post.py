@@ -78,6 +78,7 @@ def fetch_videos_by_genres(genre_ids, hits):
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
     all_items = []
+
     for genre_id in genre_ids:
         params = {
             "api_id":        API_ID,
@@ -99,22 +100,29 @@ def fetch_videos_by_genres(genre_ids, hits):
             continue
         items = resp.json().get("result", {}).get("items", [])
         print(f"  -> API returned {len(items)} items")
+
         for i in items:
             title = i.get("title", "").strip()
             aff_url = i.get("affiliateURL", "")
-            # Detail page URL from API 'URL' field, not affiliate link
-            url_info = i.get("URL", {}) or {}
+            # Get detail URL from API 'URL' field
+            url_info = i.get("URL") or {}
             if isinstance(url_info, dict):
                 detail_url = url_info.get("list") or url_info.get("url") or ""
             else:
                 detail_url = url_info
-            main_img = img_info.get("large") or img_info.get("small") or ""("large") or img_info.get("small") or ""
-            # Try fetch_detail, fallback on API data
+
+            # Main image from API
+            img_info = i.get("imageURL", {}) or {}
+            main_img = img_info.get("large") or img_info.get("small") or ""
+
+            # Scrape detail page
             try:
                 desc_html, samples_html = fetch_detail(detail_url, session)
             except Exception as e:
                 print(f"[Warn] detail fetch failed for {title}: {e}")
                 desc_html, samples_html = "", []
+
+            # Fallback to API data if needed
             api_desc = i.get("description", "").strip()
             description = desc_html or api_desc or "(説明文なし)"
             samples = samples_html or []
@@ -123,6 +131,7 @@ def fetch_videos_by_genres(genre_ids, hits):
                 for val in sample_api.values():
                     if isinstance(val, list): samples.extend(val)
                     elif isinstance(val, str): samples.append(val)
+
             all_items.append({
                 "title":       title,
                 "url":         aff_url,
@@ -134,6 +143,7 @@ def fetch_videos_by_genres(genre_ids, hits):
             })
             print(f"  ■ Fetched: {title}, samples:{len(samples)}")
             time.sleep(1)
+
     print(f"=== Total fetched {len(all_items)} videos ===")
     return all_items
 
@@ -148,16 +158,22 @@ def post_to_wp(item: dict):
         if p.title == item['title']:
             print(f"→ Skipping duplicate: {item['title']}")
             return
+
+    # Upload thumbnail
     img_data = requests.get(item["image_url"]).content
     media_data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg", "bits": xmlrpc_client.Binary(img_data)}
     resp_media = wp.call(media.UploadFile(media_data))
-    attach_id  = resp_media["id"]
-    # Build HTML
-    html = [f'<p><a href="{item['url']}" target="_blank"><img src="{resp_media["url"]}" alt="{item['title']}"/></a></p>',
-            f'<p>{item['description']}</p>']
+    attach_id  = resp_media.get("id")
+
+    # Build post content
+    html = [
+        f'<p><a href="{item['url']}" target="_blank"><img src="{resp_media.get("url")}" alt="{item['title']}"/></a></p>',
+        f'<p>{item['description']}</p>'
+    ]
     for s in item.get("samples", []):
         html.append(f'<p><img src="{s}" alt="サンプル画像"/></p>')
     html.append(f'<p><a href="{item['url']}" target="_blank">▶ 詳細・購入はこちら</a></p>')
+
     post = WordPressPost()
     post.title       = item['title']
     post.content     = "\n".join(html)
