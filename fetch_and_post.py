@@ -4,13 +4,14 @@
 import os
 import time
 import requests
+from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 
 # ───────────────────────────────────────────────────────────
-# 環境変数読み込み (.env または GitHub Secrets)
+# 環境変数読み込み
 # ───────────────────────────────────────────────────────────
 load_dotenv()
 AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
@@ -27,59 +28,59 @@ USER_AGENT   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 def fetch_page(url: str, session: requests.Session) -> requests.Response:
     headers = {"User-Agent": USER_AGENT}
     res = session.get(url, headers=headers)
-    # 年齢確認ページにリダイレクトされたら
+    # 年齢確認リダイレクト時
     if "age_check" in res.url:
         soup = BeautifulSoup(res.text, "lxml")
-        # フォームがあれば submit する
+        # 1) <form> があれば submit
         form = soup.find("form")
         if form and form.get("action"):
             action = form["action"]
             data = {inp["name"]: inp.get("value", "") for inp in form.find_all("input") if inp.get("name")}
             session.post(action, data=data, headers=headers)
         else:
-            # フォームがない場合は「I Agree/同意する」リンクをクリック
-            agree = soup.find("a", string=lambda t: t and ("I Agree" in t or "同意する" in t))
-            if agree and agree.get("href"):
-                session.get(agree["href"], headers=headers)
+            # 2) 「I Agree/同意する」画像リンクを探してクリック
+            img = soup.find("img", alt=lambda v: v and ("I Agree" in v or "同意する" in v))
+            if img:
+                a = img.find_parent("a", href=True)
+                if a:
+                    session.get(a["href"], headers=headers)
+                else:
+                    print(f"[Warning] Agree link parent not found on age_check page")
             else:
-                print(f"[Warning] age_check bypass link not found on {url}")
-        # 再度本来のページを取得
+                print(f"[Warning] age_check bypass element not found on {url}")
+        # 再取得
         res = session.get(url, headers=headers)
     res.raise_for_status()
     return res
 
 # ───────────────────────────────────────────────────────────
-# 動画一覧と詳細からメタデータを取得
+# 動画一覧＆詳細スクレイピング
 # ───────────────────────────────────────────────────────────
 def fetch_videos_from_html() -> list[dict]:
     print("=== Start fetching videos ===")
     session = requests.Session()
+    # 年齢認証バイパス含めて一覧取得
     listing = fetch_page(LIST_URL, session)
     soup = BeautifulSoup(listing.text, "lxml")
-    # 複数候補のセレクタを試す
-    cards = (
-        soup.select(".list-inner .item") or
-        soup.select(".list-box") or
-        soup.select("li")
-    )[:HITS]
+    cards = soup.select(".list-inner .item")[:HITS]
+    if not cards:
+        cards = soup.select("ul.search-list li")[:HITS]  # 別セレクタ例
     items = []
 
     for idx, card in enumerate(cards, start=1):
-        link_tag = card.find("a", href=True)
-        if not link_tag:
-            continue
-        link = link_tag["href"]
-        title = link_tag.get("title") or link_tag.get_text(strip=True)
-        img_tag = card.find("img")
-        if not img_tag:
-            continue
-        img_url = img_tag.get("data-src") or img_tag.get("src")
+        a = card.find("a", href=True)
+        if not a: continue
+        link = a["href"]
+        title = a.get("title") or a.get_text(strip=True)
+        img = card.find("img")
+        if not img: continue
+        img_url = img.get("data-src") or img.get("src")
 
-        # 詳細ページ取得＆解析
+        # 詳細ページ取得
         detail = fetch_page(link, session)
         ds = BeautifulSoup(detail.text, "lxml")
 
-        # ジャンル・出演者抽出
+        # ジャンル・出演者
         genres, actors = [], []
         for li in ds.select(".mg-b20 li"):
             label = li.select_one(".label").get_text(strip=True)
@@ -111,13 +112,13 @@ def fetch_videos_from_html() -> list[dict]:
     return items
 
 # ───────────────────────────────────────────────────────────
-# WordPress 投稿処理
+# WordPress へ投稿
 # ───────────────────────────────────────────────────────────
 def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
     client = Client(WP_URL, WP_USER, WP_PASS)
 
-    # サムネイル画像アップロード
+    # サムネイルアップロード
     img_data = requests.get(item["image_url"], headers={"User-Agent": USER_AGENT}).content
     data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg"}
     media_item = media.UploadFile(data, img_data)
