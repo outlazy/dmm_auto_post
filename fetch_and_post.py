@@ -17,23 +17,28 @@ AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
 WP_URL       = os.getenv("WP_URL")
 WP_USER      = os.getenv("WP_USER")
 WP_PASS      = os.getenv("WP_PASS")
-GENRE_IDS    = [1034, 8503]              # 取得したいジャンルをリストで指定
-HITS         = int(os.getenv("HITS", 5)) # 1ジャンルあたりの取得件数
+
+if not API_ID or not AFFILIATE_ID:
+    raise RuntimeError("環境変数 DMM_API_ID / DMM_AFFILIATE_ID が設定されていません")
+
+# 複数取得したいジャンルをリストで指定
+GENRE_IDS    = [1034, 8503]
+HITS         = int(os.getenv("HITS", 5))  # 1ジャンルあたりの取得件数
 
 # ───────────────────────────────────────────────────────────
-# DMM（FANZA）アフィリエイト API から取得
+# DMM(FANZA)アフィリエイトAPIから動画情報を取得
 # ───────────────────────────────────────────────────────────
-def fetch_videos_by_genre(genre_id, hits):
+def fetch_videos_by_genre(genre_id: int, hits: int) -> list[dict]:
     url = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
         "api_id":        API_ID,
         "affiliate_id":  AFFILIATE_ID,
-        "site":          "DMM.R18",   # アダルトは DMM.R18 を指定
+        "site":          "FANZA",      # 成人動画はFANZA
         "service":       "digital",
         "floor":         "videoa",
         "mono_genre_id": genre_id,
         "hits":          hits,
-        "sort":          "date",      # 新着順
+        "sort":          "date",       # 新着順
         "output":        "json"
     }
     print(f"=== Fetching genre {genre_id} ({hits}件) ===")
@@ -41,11 +46,11 @@ def fetch_videos_by_genre(genre_id, hits):
     try:
         resp.raise_for_status()
     except requests.exceptions.HTTPError as e:
-        print(f"[Error] API request failed for genre {genre_id}: {e}")
+        print(f"[Error] genre {genre_id} API request failed: {e}")
         return []
     data = resp.json().get("result", {})
     items = data.get("items", [])
-    print(f"  -> Fetched {len(items)} items")
+    print(f"  -> Fetched {len(items)} items for genre {genre_id}")
     videos = []
     for i in items:
         videos.append({
@@ -59,9 +64,9 @@ def fetch_videos_by_genre(genre_id, hits):
     return videos
 
 # ───────────────────────────────────────────────────────────
-# WordPress に投稿
+# WordPressへ投稿
 # ───────────────────────────────────────────────────────────
-def post_to_wp(item):
+def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
     wp = Client(WP_URL, WP_USER, WP_PASS)
 
@@ -99,8 +104,8 @@ def main():
         vids = fetch_videos_by_genre(gid, HITS)
         all_videos.extend(vids)
         time.sleep(1)  # API連続アクセス抑制
-
     print(f"=== Total videos to post: {len(all_videos)} ===")
+
     for vid in all_videos:
         try:
             post_to_wp(vid)
