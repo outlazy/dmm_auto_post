@@ -101,7 +101,12 @@ def fetch_videos_by_genres(genre_ids, hits):
         print(f"  -> API returned {len(items)} items")
         for i in items:
             title = i.get("title", "").strip()
-            detail_url = i.get("URL", "")  # Use API detail URL
+            # Detail URL: API returns URL as dict with 'list' etc
+            url_info = i.get("URL") or {}
+            if isinstance(url_info, dict):
+                detail_url = url_info.get("list") or url_info.get("url") or ""
+            else:
+                detail_url = url_info
             aff_url = i.get("affiliateURL", "")
             img_info = i.get("imageURL", {}) or {}
             main_img = img_info.get("large") or img_info.get("small") or ""
