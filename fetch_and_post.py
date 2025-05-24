@@ -87,16 +87,21 @@ def post_to_wp(item: dict):
     media_item = media.UploadFile(data)
     resp = wp.call(media_item)
 
+    # *** ↓ ここを修正 ***
+    # resp は dict なので resp['url'], resp['id'] で参照
+    attachment_url = resp['url']
+    attachment_id = resp['id']
+
     # 投稿作成
     post = WordPressPost()
     post.title = item["title"]
     post.content = (
         f'<p><a href="{item["url"]}" target="_blank">'
-        f'<img src="{resp.url}" alt="{item["title"]}"/></a></p>'
+        f'<img src="{attachment_url}" alt="{item["title"]}"/></a></p>'
         f'<p>{item["description"]}</p>'
         f'<p><a href="{item["url"]}" target="_blank">▶ 詳細・購入はこちら</a></p>'
     )
-    post.thumbnail = resp.id
+    post.thumbnail = attachment_id
     post.terms_names = {
         "category": ["DMM動画", "AV"],
         "post_tag": item["genres"] + item["actors"]
