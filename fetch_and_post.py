@@ -18,14 +18,14 @@ AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
 WP_URL       = os.getenv("WP_URL")
 WP_USER      = os.getenv("WP_USER")
 WP_PASS      = os.getenv("WP_PASS")
-GENRE_IDS    = [1034, 8503]
-HITS         = int(os.getenv("HITS", 5))
+GENRE_IDS    = [1034, 8503]               # 取得したいジャンルID
+HITS         = int(os.getenv("HITS", 5))  # 1ジャンルあたりの取得件数
 
 if not API_ID or not AFFILIATE_ID:
-    raise RuntimeError("DMM_API_ID / DMM_AFFILIATE_ID を環境変数で設定してください")
+    raise RuntimeError("環境変数 DMM_API_ID / DMM_AFFILIATE_ID が設定されていません")
 
 # ───────────────────────────────────────────────────────────
-# DMM(FANZA)アフィリエイトAPIから動画情報を取得
+# DMM(FANZA) アフィリエイト API から動画情報を取得
 # ───────────────────────────────────────────────────────────
 def fetch_videos_by_genre(genre_id: int, hits: int) -> list[dict]:
     url = "https://api.dmm.com/affiliate/v3/ItemList"
@@ -48,36 +48,42 @@ def fetch_videos_by_genre(genre_id: int, hits: int) -> list[dict]:
         print(f"[Error] genre {genre_id} API request failed: {e}")
         return []
 
-    data = resp.json().get("result", {})
-    items = data.get("items", [])
+    result = resp.json().get("result", {})
+    items  = result.get("items", [])
     print(f"  -> API returned {len(items)} items")
 
     videos = []
     for i in items:
-        image_info = i.get("imageURL", {}) or {}
-        img_url = image_info.get("large") or image_info.get("small") or ""
+        # 画像URLを large→small でフォールバック
+        img_info = i.get("imageURL", {}) or {}
+        img_url  = img_info.get("large") or img_info.get("small") or ""
         if not img_url:
             print(f"[Warning] No image for '{i.get('title')}', skipping")
             continue
+
+        # 説明文が空なら代替テキストを設定
+        desc = i.get("description", "").strip()
+        if not desc:
+            desc = "(説明文なし)"
 
         videos.append({
             "title":       i.get("title", "").strip(),
             "url":         i.get("affiliateURL", ""),
             "image_url":   img_url,
-            "description": i.get("description", "").strip(),
+            "description": desc,
             "genres":      [g.get("name") for g in i.get("genre", [])],
             "actors":      [a.get("name") for a in i.get("actor", [])]
         })
     return videos
 
 # ───────────────────────────────────────────────────────────
-# WordPressへ投稿
+# WordPress に投稿
 # ───────────────────────────────────────────────────────────
 def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
     wp = Client(WP_URL, WP_USER, WP_PASS)
 
-    # サムネイル画像アップロード
+    # 画像アップロード
     img_data = requests.get(item["image_url"]).content
     data = {
         "name": os.path.basename(item["image_url"]),
@@ -86,27 +92,26 @@ def post_to_wp(item: dict):
     }
     media_item = media.UploadFile(data)
     resp = wp.call(media_item)
+    attachment_url = resp["url"]
+    attachment_id  = resp["id"]
 
-    # *** ↓ ここを修正 ***
-    # resp は dict なので resp['url'], resp['id'] で参照
-    attachment_url = resp['url']
-    attachment_id = resp['id']
+    # 投稿本文作成
+    html = []
+    html.append(f'<p><a href="{item["url"]}" target="_blank">')
+    html.append(f'  <img src="{attachment_url}" alt="{item["title"]}"/></a></p>')
+    html.append(f'<p>{item["description"]}</p>')
+    html.append(f'<p><a href="{item["url"]}" target="_blank">▶ 詳細・購入はこちら</a></p>')
 
-    # 投稿作成
     post = WordPressPost()
-    post.title = item["title"]
-    post.content = (
-        f'<p><a href="{item["url"]}" target="_blank">'
-        f'<img src="{attachment_url}" alt="{item["title"]}"/></a></p>'
-        f'<p>{item["description"]}</p>'
-        f'<p><a href="{item["url"]}" target="_blank">▶ 詳細・購入はこちら</a></p>'
-    )
-    post.thumbnail = attachment_id
-    post.terms_names = {
+    post.title        = item["title"]
+    post.content      = "\n".join(html)
+    post.thumbnail    = attachment_id
+    post.terms_names  = {
         "category": ["DMM動画", "AV"],
         "post_tag": item["genres"] + item["actors"]
     }
-    post.post_status = "publish"
+    post.post_status  = "publish"
+
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {item['title']}")
 
@@ -119,9 +124,9 @@ def main():
     for gid in GENRE_IDS:
         vids = fetch_videos_by_genre(gid, HITS)
         all_videos.extend(vids)
-        time.sleep(1)
+        time.sleep(1)  # API連続アクセス抑制
 
-    print(f"=== Total videos to post: {len(all_videos)} ===")
+    print(f"=== Total to post: {len(all_videos)} videos ===")
     for vid in all_videos:
         try:
             post_to_wp(vid)
