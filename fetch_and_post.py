@@ -22,14 +22,17 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
     """ページ取得（年齢確認フォーム対応付き）"""
     headers = {"User-Agent": USER_AGENT}
     res = session.get(url, headers=headers)
+    # DMM年齢確認フォーム対応
     if "age_check" in res.url:
-        # 年齢確認フォームをサブミット
         soup = BeautifulSoup(res.text, "lxml")
         form = soup.find("form")
-        action = form["action"]
-        data = {inp["name"]: inp.get("value", "") for inp in form.find_all("input")}
-        session.post(action, data=data, headers=headers)
-        res = session.get(url, headers=headers)
+        if form and form.get("action"):
+            action = form["action"]
+            data = {inp["name"]: inp.get("value", "") for inp in form.find_all("input") if inp.get("name")}
+            session.post(action, data=data, headers=headers)
+            res = session.get(url, headers=headers)
+        else:
+            print(f"[Warning] age_check form not found on {url}, skipping form submission")
     res.raise_for_status()
     return res
 
