@@ -102,14 +102,14 @@ def fetch_videos_by_genres(genre_ids, hits):
         for i in items:
             title = i.get("title", "").strip()
             aff_url = i.get("affiliateURL", "")
-                        # Detail page URL: use affiliateURL trimmed of query
+            # 個別ページURL: affiliateURLのクエリ除去
             detail_url = aff_url.split('?')[0]
 
-            # Main image
-            img_info = i.get("imageURL", {}) or {}("imageURL", {}) or {}
+            # メイン画像
+            img_info = i.get("imageURL", {}) or {}
             main_img = img_info.get("large") or img_info.get("small") or ""
 
-            # Scrape detail
+            # 詳細スクレイピング
             desc_html, samples_html = "", []
             if detail_url:
                 try:
@@ -117,7 +117,7 @@ def fetch_videos_by_genres(genre_ids, hits):
                 except Exception as e:
                     print(f"[Warn] detail fetch failed for {title}: {e}")
 
-            # Fallbacks
+            # フォールバック
             api_desc = i.get("description", "").strip()
             description = desc_html or api_desc or "(説明文なし)"
             samples = samples_html or []
@@ -143,7 +143,7 @@ def fetch_videos_by_genres(genre_ids, hits):
     return all_items
 
 # ───────────────────────────────────────────────────────────
-# Post to WordPress with duplicate check
+# WordPress投稿 with duplicate check
 # ───────────────────────────────────────────────────────────
 def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
@@ -154,13 +154,13 @@ def post_to_wp(item: dict):
             print(f"→ Skipping duplicate: {item['title']}")
             return
 
-    # Upload thumbnail
+    # サムネイルアップロード
     img_data = requests.get(item["image_url"]).content
     media_data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg", "bits": xmlrpc_client.Binary(img_data)}
     resp_media = wp.call(media.UploadFile(media_data))
     attach_id  = resp_media.get("id")
 
-    # Build content
+    # 記事作成
     html = [
         f'<p><a href="{item['url']}" target="_blank"><img src="{resp_media.get("url")}" alt="{item['title']}"/></a></p>',
         f'<p>{item['description']}</p>'
