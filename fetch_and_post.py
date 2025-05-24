@@ -9,28 +9,36 @@ from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 
-# 環境変数読み込み (.env または GitHub Secrets 経由)
+# Load environment variables from .env or GitHub Secrets
 load_dotenv()
 
-# 設定
+# Configuration
 AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
 LIST_URL     = "https://video.dmm.co.jp/av/list/?genre=1034"
 HITS         = int(os.getenv("HITS", 5))
+USER_AGENT   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
-def fetch_description(detail_url: str) -> str:
-    """動画詳細ページから紹介文をスクレイピング"""
-    res = requests.get(detail_url)
+def fetch_page(url: str, session: requests.Session) -> requests.Response:
+    """Fetch a page, handling DMM age-check if encountered."""
+    headers = {"User-Agent": USER_AGENT}
+    res = session.get(url, headers=headers)
+    if "age_check" in res.url:
+        # submit the age-check form
+        soup = BeautifulSoup(res.text, "lxml")
+        form = soup.find("form")
+        action = form["action"]
+        data = {inp["name"]: inp.get("value", "") for inp in form.find_all("input")}
+        session.post(action, data=data, headers=headers)
+        res = session.get(url, headers=headers)
     res.raise_for_status()
-    soup = BeautifulSoup(res.text, "lxml")
-    el = soup.select_one("#module-video-intro .text") or soup.select_one(".text")
-    return el.get_text(strip=True) if el else ""
+    return res
 
-def fetch_videos_from_html(hits: int = HITS) -> list[dict]:
-    """genre=1034 の一覧ページから先頭 hits 件を取得"""
-    res = requests.get(LIST_URL)
-    res.raise_for_status()
-    soup = BeautifulSoup(res.text, "lxml")
-    cards = soup.select(".list-inner .item")[:hits]
+def fetch_videos_from_html() -> list[dict]:
+    """Scrape the listing page and then each detail page for metadata."""
+    session = requests.Session()
+    listing = fetch_page(LIST_URL, session)
+    soup = BeautifulSoup(listing.text, "lxml")
+    cards = soup.select(".list-inner .item")[:HITS]
     items = []
 
     for idx, card in enumerate(cards, start=1):
@@ -39,38 +47,59 @@ def fetch_videos_from_html(hits: int = HITS) -> list[dict]:
         title = a.get("title") or card.select_one(".ttl").get_text(strip=True)
         img = card.select_one("img")
         img_url = img.get("data-src") or img.get("src")
-        desc = fetch_description(link)
+
+        # Fetch detail page
+        detail = fetch_page(link, session)
+        ds = BeautifulSoup(detail.text, "lxml")
+
+        # Extract genres and actors
+        genres, actors = [], []
+        for li in ds.select(".mg-b20 li"):
+            label = li.select_one(".label").get_text(strip=True)
+            text  = li.get_text(strip=True).replace(label, "").strip()
+            if "ジャンル" in label:
+                genres = [g.strip() for g in text.split(",")]
+            elif "出演" in label or "女優" in label:
+                actors = [a.strip() for a in text.split(",")]
+
+        # Extract description
+        desc_el = ds.select_one("#module-video-intro .text") or ds.select_one(".text")
+        description = desc_el.get_text(strip=True) if desc_el else ""
+
+        # Build affiliate URL
         aff_url = f"{link}?i3_ref=list&i3_ord={idx}&affiliate_id={AFFILIATE_ID}"
 
         items.append({
             "title":       title,
             "url":         aff_url,
             "image_url":   img_url,
-            "description": desc,
-            "genres":      ["ジャンル1034"],
-            "actors":      []
+            "description": description,
+            "genres":      genres or ["ジャンル1034"],
+            "actors":      actors
         })
-        time.sleep(1)  # リクエスト間隔
+
+        time.sleep(1)  # throttle requests
+
     return items
 
 def post_to_wp(item: dict):
-    """WordPress に投稿"""
-    wp_url  = os.getenv("WP_URL")
-    wp_user = os.getenv("WP_USER")
-    wp_pass = os.getenv("WP_PASS")
+    """Upload thumbnail, create and publish a WordPress post."""
+    client = Client(
+        os.getenv("WP_URL"),
+        os.getenv("WP_USER"),
+        os.getenv("WP_PASS")
+    )
 
-    client = Client(wp_url, wp_user, wp_pass)
-
-    # 1) サムネイル画像をアップロード
-    img_data = requests.get(item["image_url"]).content
+    # 1) Upload thumbnail
+    img_data = requests.get(item["image_url"], headers={"User-Agent": USER_AGENT}).content
     data = {
         "name": os.path.basename(item["image_url"]),
-        "type": "image/jpeg",
+        "type": "image/jpeg"
     }
     media_item = media.UploadFile(data, img_data)
     res = client.call(media_item)
 
-    # 2) 投稿内容を作成
+    # 2) Create post
     post = WordPressPost()
     post.title = item["title"]
     post.content = (
