@@ -33,17 +33,35 @@ if not AFFILIATE_ID:
     raise RuntimeError("環境変数 DMM_AFFILIATE_ID が設定されていません")
 
 # ───────────────────────────────────────────────────────────
+# 汎用フェッチ (年齢確認バイパス対応)
+# ───────────────────────────────────────────────────────────
+def fetch_page(url: str, session: requests.Session) -> requests.Response:
+    headers = {"User-Agent": USER_AGENT}
+    res = session.get(url, headers=headers)
+    # 年齢確認ページへのリダイレクト
+    if "age_check" in res.url:
+        soup = BeautifulSoup(res.text, "lxml")
+        form = soup.find("form")
+        if form and form.get("action"):
+            action = form["action"]
+            data = {inp.get("name"): inp.get("value", "") for inp in form.find_all("input") if inp.get("name")}
+            session.post(action, data=data, headers=headers)
+        else:
+            agree = soup.find("a", string=lambda t: t and ("I Agree" in t or "同意する" in t))
+            if agree and agree.get("href"):
+                session.get(agree["href"], headers=headers)
+        res = session.get(url, headers=headers)
+    res.raise_for_status()
+    return res
+
+# ───────────────────────────────────────────────────────────
 # 詳細ページから「紹介文」と「発売日」を取得
 # ───────────────────────────────────────────────────────────
-def fetch_detail(detail_url, session):
-    headers = {"User-Agent": USER_AGENT}
-    res = session.get(detail_url, headers=headers)
-    res.raise_for_status()
+def fetch_detail(detail_url: str, session: requests.Session):
+    res = fetch_page(detail_url, session)
     soup = BeautifulSoup(res.text, "lxml")
-    # 説明文
     desc_el = soup.select_one("#module-video-intro .text") or soup.select_one(".text")
     description = desc_el.get_text(strip=True) if desc_el else "(説明文なし)"
-    # 発売日
     release_date = None
     dl = soup.find("dl", class_="release")
     if dl:
@@ -61,44 +79,34 @@ def fetch_videos_from_pages(urls):
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
     videos = []
-
     for url in urls:
         print(f"=== Fetching URL: {url}")
-        res = session.get(url)
-        res.raise_for_status()
+        res = fetch_page(url, session)
         soup = BeautifulSoup(res.text, "lxml")
         cards = (soup.select(".list-inner .item") or
                  soup.select(".list-box li") or
                  soup.select("ul.search-list > li"))[:HITS]
-
         for idx, card in enumerate(cards, start=1):
             a = card.find("a", href=True)
             if not a:
                 continue
             link = a["href"]
             title = a.get("title") or a.get_text(strip=True)
-            # サムネイル
             img = card.find("img")
             img_url = img.get("data-src") or img.get("src") or ""
             if not img_url:
                 print(f"[Warning] No thumbnail for '{title}', skipping")
                 continue
-            # 詳細
             description, release_date = fetch_detail(link, session)
             if release_date and release_date > TODAY:
                 print(f"[Skip] '{title}' は発売前 ({release_date})")
                 continue
-            # サンプル画像
             samples = []
-            sample_tags = card.select(".sample-wrap img")
-            for st in sample_tags:
+            for st in card.select(".sample-wrap img"):
                 s_url = st.get("data-src") or st.get("src")
                 if s_url:
                     samples.append(s_url)
-
-            # アフィリエイトリンク
             aff_url = f"{link}?i3_ref=list&i3_ord={idx}&affiliate_id={AFFILIATE_ID}"
-
             videos.append({
                 "title":       title.strip(),
                 "url":         aff_url,
@@ -119,32 +127,23 @@ def fetch_videos_from_pages(urls):
 def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    # サムネイル
     img_data = requests.get(item["image_url"]).content
-    data = {
-        "name": os.path.basename(item["image_url"]),
-        "type": "image/jpeg",
-        "bits": xmlrpc_client.Binary(img_data)
-    }
+    data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg", "bits": xmlrpc_client.Binary(img_data)}
     media_item = media.UploadFile(data)
     resp = wp.call(media_item)
     attach_url = resp["url"]
-    attach_id  = resp["id"]
-
-    # HTML組み立て
+    attach_id = resp["id"]
     html = [
-        f'<p><a href="{item['url']}" target="_blank">'
-        f'<img src="{attach_url}" alt="{item['title']}"/></a></p>',
+        f'<p><a href="{item['url']}" target="_blank"><img src="{attach_url}" alt="{item['title']}"/></a></p>',
         f'<p>{item['description']}</p>'
     ]
     for s in item.get("samples", []):
         html.append(f'<p><img src="{s}" alt="サンプル画像"/></p>')
     html.append(f'<p><a href="{item['url']}" target="_blank">▶ 詳細・購入はこちら</a></p>')
-
     post = WordPressPost()
-    post.title       = item['title']
-    post.content     = "\n".join(html)
-    post.thumbnail   = attach_id
+    post.title = item['title']
+    post.content = "\n".join(html)
+    post.thumbnail = attach_id
     post.terms_names = {"category": ["DMM動画","AV"], "post_tag": []}
     post.post_status = "publish"
     wp.call(posts.NewPost(post))
