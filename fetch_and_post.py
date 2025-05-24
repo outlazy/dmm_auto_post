@@ -61,8 +61,10 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
 def fetch_detail(detail_url: str, session: requests.Session):
     res = fetch_page(detail_url, session)
     soup = BeautifulSoup(res.text, "lxml")
+    # 説明文
     desc_el = soup.select_one("div.mg-b20.lh4")
     description = desc_el.get_text(strip=True) if desc_el else ""
+    # サンプル画像
     samples = []
     for a in soup.select("#sample-image-block a[id^=sample-image]"):
         img = a.find("img")
@@ -93,36 +95,28 @@ def fetch_videos_by_genres(genre_ids, hits):
         }
         print(f"=== Fetching genre {genre_id} by ranking ({hits}件) ===")
         resp = requests.get(api_url, params=params)
-        try:
-            resp.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            print(f"[Error] genre {genre_id} API request failed: {e}")
-            continue
+        resp.raise_for_status()
         items = resp.json().get("result", {}).get("items", [])
         print(f"  -> API returned {len(items)} items")
 
         for i in items:
             title = i.get("title", "").strip()
             aff_url = i.get("affiliateURL", "")
-            # Get detail URL from API 'URL' field
-            url_info = i.get("URL") or {}
-            if isinstance(url_info, dict):
-                detail_url = url_info.get("list") or url_info.get("url") or ""
-            else:
-                detail_url = url_info
+            # Detail page URL: strip query params from affiliateURL
+            detail_url = aff_url.split('?')[0]
 
-            # Main image from API
+            # Main image
             img_info = i.get("imageURL", {}) or {}
             main_img = img_info.get("large") or img_info.get("small") or ""
 
-            # Scrape detail page
+            # Scrape detail
+            desc_html, samples_html = "", []
             try:
                 desc_html, samples_html = fetch_detail(detail_url, session)
             except Exception as e:
                 print(f"[Warn] detail fetch failed for {title}: {e}")
-                desc_html, samples_html = "", []
 
-            # Fallback to API data if needed
+            # Fallbacks
             api_desc = i.get("description", "").strip()
             description = desc_html or api_desc or "(説明文なし)"
             samples = samples_html or []
@@ -165,7 +159,7 @@ def post_to_wp(item: dict):
     resp_media = wp.call(media.UploadFile(media_data))
     attach_id  = resp_media.get("id")
 
-    # Build post content
+    # Build content
     html = [
         f'<p><a href="{item['url']}" target="_blank"><img src="{resp_media.get("url")}" alt="{item['title']}"/></a></p>',
         f'<p>{item['description']}</p>'
