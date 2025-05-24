@@ -7,6 +7,7 @@ import requests
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
+from wordpress_xmlrpc.compat import xmlrpc_client
 
 # ───────────────────────────────────────────────────────────
 # 環境変数読み込み
@@ -53,7 +54,6 @@ def fetch_videos_by_genre(genre_id: int, hits: int) -> list[dict]:
 
     videos = []
     for i in items:
-        # JSON の imageURL オブジェクトから large または small を取得
         image_info = i.get("imageURL", {}) or {}
         img_url = image_info.get("large") or image_info.get("small") or ""
         if not img_url:
@@ -77,11 +77,17 @@ def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
     wp = Client(WP_URL, WP_USER, WP_PASS)
 
+    # サムネイル画像アップロード
     img_data = requests.get(item["image_url"]).content
-    data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg"}
-    media_item = media.UploadFile(data, img_data)
+    data = {
+        "name": os.path.basename(item["image_url"]),
+        "type": "image/jpeg",
+        "bits": xmlrpc_client.Binary(img_data)
+    }
+    media_item = media.UploadFile(data)
     resp = wp.call(media_item)
 
+    # 投稿作成
     post = WordPressPost()
     post.title = item["title"]
     post.content = (
