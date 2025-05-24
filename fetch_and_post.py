@@ -9,50 +9,73 @@ from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 
+# ───────────────────────────────────────────────────────────
 # 環境変数読み込み (.env または GitHub Secrets)
+# ───────────────────────────────────────────────────────────
 load_dotenv()
-
-# 設定
 AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
+WP_URL       = os.getenv("WP_URL")
+WP_USER      = os.getenv("WP_USER")
+WP_PASS      = os.getenv("WP_PASS")
 LIST_URL     = "https://video.dmm.co.jp/av/list/?genre=1034"
 HITS         = int(os.getenv("HITS", 5))
 USER_AGENT   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
+# ───────────────────────────────────────────────────────────
+# ページ取得＋年齢確認バイパス
+# ───────────────────────────────────────────────────────────
 def fetch_page(url: str, session: requests.Session) -> requests.Response:
-    """ページ取得（年齢確認フォーム対応付き）"""
     headers = {"User-Agent": USER_AGENT}
     res = session.get(url, headers=headers)
-    # DMM年齢確認フォーム対応
+    # 年齢確認ページにリダイレクトされたら
     if "age_check" in res.url:
         soup = BeautifulSoup(res.text, "lxml")
+        # フォームがあれば submit する
         form = soup.find("form")
         if form and form.get("action"):
             action = form["action"]
             data = {inp["name"]: inp.get("value", "") for inp in form.find_all("input") if inp.get("name")}
             session.post(action, data=data, headers=headers)
-            res = session.get(url, headers=headers)
         else:
-            print(f"[Warning] age_check form not found on {url}, skipping form submission")
+            # フォームがない場合は「I Agree/同意する」リンクをクリック
+            agree = soup.find("a", string=lambda t: t and ("I Agree" in t or "同意する" in t))
+            if agree and agree.get("href"):
+                session.get(agree["href"], headers=headers)
+            else:
+                print(f"[Warning] age_check bypass link not found on {url}")
+        # 再度本来のページを取得
+        res = session.get(url, headers=headers)
     res.raise_for_status()
     return res
 
+# ───────────────────────────────────────────────────────────
+# 動画一覧と詳細からメタデータを取得
+# ───────────────────────────────────────────────────────────
 def fetch_videos_from_html() -> list[dict]:
-    """一覧ページをスクレイピングし、詳細ページも回って metadata 取得"""
     print("=== Start fetching videos ===")
     session = requests.Session()
     listing = fetch_page(LIST_URL, session)
     soup = BeautifulSoup(listing.text, "lxml")
-    cards = soup.select(".list-inner .item")[:HITS]
+    # 複数候補のセレクタを試す
+    cards = (
+        soup.select(".list-inner .item") or
+        soup.select(".list-box") or
+        soup.select("li")
+    )[:HITS]
     items = []
 
     for idx, card in enumerate(cards, start=1):
-        a = card.select_one("a")
-        link = a["href"]
-        title = a.get("title") or card.select_one(".ttl").get_text(strip=True)
-        img = card.select_one("img")
-        img_url = img.get("data-src") or img.get("src")
+        link_tag = card.find("a", href=True)
+        if not link_tag:
+            continue
+        link = link_tag["href"]
+        title = link_tag.get("title") or link_tag.get_text(strip=True)
+        img_tag = card.find("img")
+        if not img_tag:
+            continue
+        img_url = img_tag.get("data-src") or img_tag.get("src")
 
-        # 詳細ページ取得
+        # 詳細ページ取得＆解析
         detail = fetch_page(link, session)
         ds = BeautifulSoup(detail.text, "lxml")
 
@@ -62,15 +85,15 @@ def fetch_videos_from_html() -> list[dict]:
             label = li.select_one(".label").get_text(strip=True)
             text  = li.get_text(strip=True).replace(label, "").strip()
             if "ジャンル" in label:
-                genres = [g.strip() for g in text.split(",")]
-            elif "出演" in label or "女優" in label:
-                actors = [a.strip() for a in text.split(",")]
+                genres = [g.strip() for g in text.split(",") if g.strip()]
+            elif any(k in label for k in ("出演", "女優")):
+                actors = [a.strip() for a in text.split(",") if a.strip()]
 
-        # 説明文抽出
+        # 説明文
         desc_el = ds.select_one("#module-video-intro .text") or ds.select_one(".text")
         description = desc_el.get_text(strip=True) if desc_el else ""
 
-        # アフィリエイトリンク生成
+        # アフィリエイトリンク
         aff_url = f"{link}?i3_ref=list&i3_ord={idx}&affiliate_id={AFFILIATE_ID}"
 
         items.append({
@@ -81,28 +104,22 @@ def fetch_videos_from_html() -> list[dict]:
             "genres":      genres or ["ジャンル1034"],
             "actors":      actors
         })
-
         print(f"  ■ Fetched [{idx}]: {title}")
-        time.sleep(1)  # サイト負荷軽減
+        time.sleep(1)
 
     print(f"=== Finished fetching {len(items)} videos ===")
     return items
 
+# ───────────────────────────────────────────────────────────
+# WordPress 投稿処理
+# ───────────────────────────────────────────────────────────
 def post_to_wp(item: dict):
-    """WordPress に投稿（画像アップロード→投稿作成）"""
     print(f"--> Posting: {item['title']}")
-    client = Client(
-        os.getenv("WP_URL"),
-        os.getenv("WP_USER"),
-        os.getenv("WP_PASS")
-    )
+    client = Client(WP_URL, WP_USER, WP_PASS)
 
-    # 画像アップロード
+    # サムネイル画像アップロード
     img_data = requests.get(item["image_url"], headers={"User-Agent": USER_AGENT}).content
-    data = {
-        "name": os.path.basename(item["image_url"]),
-        "type": "image/jpeg"
-    }
+    data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg"}
     media_item = media.UploadFile(data, img_data)
     res = client.call(media_item)
 
@@ -121,10 +138,12 @@ def post_to_wp(item: dict):
         "post_tag": item["genres"] + item["actors"]
     }
     post.post_status = "publish"
-
     client.call(posts.NewPost(post))
     print(f"✔ Posted: {item['title']}")
 
+# ───────────────────────────────────────────────────────────
+# エントリポイント
+# ───────────────────────────────────────────────────────────
 def main():
     print("=== Job start ===")
     videos = fetch_videos_from_html()
