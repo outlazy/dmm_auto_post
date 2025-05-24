@@ -102,10 +102,13 @@ def fetch_videos_by_genres(genre_ids, hits):
         for i in items:
             title = i.get("title", "").strip()
             aff_url = i.get("affiliateURL", "")
-            # Detail page URL: strip query params from affiliateURL
-            detail_url = aff_url.split('?')[0]
-            img_info = i.get("imageURL", {}) or {}
-            main_img = img_info.get("large") or img_info.get("small") or ""
+            # Detail page URL from API 'URL' field, not affiliate link
+            url_info = i.get("URL", {}) or {}
+            if isinstance(url_info, dict):
+                detail_url = url_info.get("list") or url_info.get("url") or ""
+            else:
+                detail_url = url_info
+            main_img = img_info.get("large") or img_info.get("small") or ""("large") or img_info.get("small") or ""
             # Try fetch_detail, fallback on API data
             try:
                 desc_html, samples_html = fetch_detail(detail_url, session)
