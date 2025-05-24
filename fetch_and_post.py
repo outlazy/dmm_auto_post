@@ -26,7 +26,7 @@ AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
 WP_URL       = os.getenv("WP_URL")
 WP_USER      = os.getenv("WP_USER")
 WP_PASS      = os.getenv("WP_PASS")
-GENRE_IDS    = [1034, 8503]               # 取得したいジャンルIDリスト
+GENRE_IDS    = [1034, 8503]
 HITS         = int(os.getenv("HITS", 5))
 USER_AGENT   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 TODAY        = datetime.now().date()
@@ -35,7 +35,7 @@ if not API_ID or not AFFILIATE_ID:
     raise RuntimeError("環境変数 DMM_API_ID / DMM_AFFILIATE_ID が設定されていません")
 
 # ───────────────────────────────────────────────────────────
-# 詳細ページ取得（年齢確認バイパス）
+# HTTP GET with age_check bypass
 # ───────────────────────────────────────────────────────────
 def fetch_page(url: str, session: requests.Session) -> requests.Response:
     headers = {"User-Agent": USER_AGENT}
@@ -56,14 +56,13 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
     return res
 
 # ───────────────────────────────────────────────────────────
-# 詳細ページから説明文とサンプル画像を取得
+# Detail page scrape: description and sample images
 # ───────────────────────────────────────────────────────────
 def fetch_detail(detail_url: str, session: requests.Session):
     res = fetch_page(detail_url, session)
     soup = BeautifulSoup(res.text, "lxml")
     desc_el = soup.select_one("div.mg-b20.lh4")
     description = desc_el.get_text(strip=True) if desc_el else ""
-    # サンプル画像
     samples = []
     for a in soup.select("#sample-image-block a[id^=sample-image]"):
         img = a.find("img")
@@ -72,7 +71,7 @@ def fetch_detail(detail_url: str, session: requests.Session):
     return description, samples
 
 # ───────────────────────────────────────────────────────────
-# APIからメタ取得後、詳細スクレイピングで説明・サンプル更新
+# Fetch items via API then enrich with HTML scrape
 # ───────────────────────────────────────────────────────────
 def fetch_videos_by_genres(genre_ids, hits):
     api_url = "https://api.dmm.com/affiliate/v3/ItemList"
@@ -88,7 +87,7 @@ def fetch_videos_by_genres(genre_ids, hits):
             "floor":         "videoa",
             "mono_genre_id": genre_id,
             "hits":          hits,
-            "sort":          "rank",  # 人気順
+            "sort":          "rank",
             "output":        "json"
         }
         print(f"=== Fetching genre {genre_id} by ranking ({hits}件) ===")
@@ -102,20 +101,17 @@ def fetch_videos_by_genres(genre_ids, hits):
         print(f"  -> API returned {len(items)} items")
         for i in items:
             title = i.get("title", "").strip()
-            detail_url = i.get("URL", "").split('?')[0]
             aff_url = i.get("affiliateURL", "")
+            detail_url = aff_url.split('?')[0]
             img_info = i.get("imageURL", {}) or {}
             main_img = img_info.get("large") or img_info.get("small") or ""
-            # HTML詳細取得
             description_html, samples_html = fetch_detail(detail_url, session)
-            # フォールバック: API説明文
             api_desc = i.get("description", "").strip()
             description = description_html or api_desc or "(説明文なし)"
-            # フォールバック: APIサンプル
             samples = samples_html
             if not samples:
-                sample_info = i.get("sampleImageURL", {}) or {}
-                for val in sample_info.values():
+                sample_api = i.get("sampleImageURL", {}) or {}
+                for val in sample_api.values():
                     if isinstance(val, list): samples.extend(val)
                     elif isinstance(val, str): samples.append(val)
             all_items.append({
@@ -133,7 +129,7 @@ def fetch_videos_by_genres(genre_ids, hits):
     return all_items
 
 # ───────────────────────────────────────────────────────────
-# WordPressに投稿（重複チェック付き）
+# Post to WordPress with duplicate check
 # ───────────────────────────────────────────────────────────
 def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
@@ -143,16 +139,15 @@ def post_to_wp(item: dict):
         if p.title == item['title']:
             print(f"→ Skipping duplicate: {item['title']}")
             return
-    # アイキャッチアップロード
     img_data = requests.get(item["image_url"]).content
     media_data = {"name": os.path.basename(item["image_url"]), "type": "image/jpeg", "bits": xmlrpc_client.Binary(img_data)}
-    media_item = media.UploadFile(media_data)
-    resp = wp.call(media_item)
-    attach_url = resp["url"]
-    attach_id  = resp["id"]
-    # 本文組み立て
-    html = [f'<p><a href="{item['url']}" target="_blank"><img src="{attach_url}" alt="{item['title']}"/></a></p>',
-            f'<p>{item['description']}</p>']
+    resp_media = wp.call(media.UploadFile(media_data))
+    attach_url = resp_media["url"]
+    attach_id  = resp_media["id"]
+    html = [
+        f'<p><a href="{item['url']}" target="_blank"><img src="{attach_url}" alt="{item['title']}"/></a></p>',
+        f'<p>{item['description']}</p>'
+    ]
     for s in item.get("samples", []):
         html.append(f'<p><img src="{s}" alt="サンプル画像"/></p>')
     html.append(f'<p><a href="{item['url']}" target="_blank">▶ 詳細・購入はこちら</a></p>')
@@ -166,7 +161,7 @@ def post_to_wp(item: dict):
     print(f"✔ Posted: {item['title']}\n")
 
 # ───────────────────────────────────────────────────────────
-# メイン
+# Main
 # ───────────────────────────────────────────────────────────
 def main():
     print("=== Job start ===")
