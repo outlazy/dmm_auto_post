@@ -4,6 +4,7 @@
 import os
 import time
 import requests
+from datetime import datetime
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
@@ -52,8 +53,22 @@ def fetch_videos_by_genre(genre_id: int, hits: int) -> list[dict]:
     items  = result.get("items", [])
     print(f"  -> API returned {len(items)} items")
 
+    today = datetime.now().date()
     videos = []
+
     for i in items:
+        # 発売日チェック (future をスキップ)
+        release_str = i.get("date") or ""
+        release_date = None
+        try:
+            # "YYYY-MM-DD" or ISO format
+            release_date = datetime.fromisoformat(release_str.split("T")[0]).date()
+        except Exception:
+            pass
+        if release_date and release_date > today:
+            print(f"[Skip] '{i.get('title')}' は発売前 ({release_date})")
+            continue
+
         # 画像URLを large→small でフォールバック
         img_info = i.get("imageURL", {}) or {}
         img_url  = img_info.get("large") or img_info.get("small") or ""
@@ -62,9 +77,7 @@ def fetch_videos_by_genre(genre_id: int, hits: int) -> list[dict]:
             continue
 
         # 説明文が空なら代替テキストを設定
-        desc = i.get("description", "").strip()
-        if not desc:
-            desc = "(説明文なし)"
+        desc = i.get("description", "").strip() or "(説明文なし)"
 
         videos.append({
             "title":       i.get("title", "").strip(),
