@@ -5,7 +5,6 @@ import os
 import time
 import requests
 from datetime import datetime
-from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
@@ -15,100 +14,85 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 # 環境変数読み込み
 # ───────────────────────────────────────────────────────────
 load_dotenv()
+API_ID       = os.getenv("DMM_API_ID")
 AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
 WP_URL       = os.getenv("WP_URL")
 WP_USER      = os.getenv("WP_USER")
 WP_PASS      = os.getenv("WP_PASS")
-GENRE_ID     = 1034                  # genre=1034
-HITS         = int(os.getenv("HITS", 5))
-USER_AGENT   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-TODAY        = datetime.now().date()
+GENRE_IDS    = [1034, 8503]               # 取得したいジャンルIDリスト
+HITS         = int(os.getenv("HITS", 5))  # 各ジャンルあたりの取得件数
 
-if not AFFILIATE_ID:
-    raise RuntimeError("環境変数 DMM_AFFILIATE_ID が設定されていません")
+if not API_ID or not AFFILIATE_ID:
+    raise RuntimeError("環境変数 DMM_API_ID / DMM_AFFILIATE_ID が設定されていません")
 
 # ───────────────────────────────────────────────────────────
-# 詳細ページから「紹介文」と「発売日」を取得
+# DMM(FANZA)アフィリエイトAPIから動画情報を取得
 # ───────────────────────────────────────────────────────────
-def fetch_detail(detail_url, session):
-    headers = {"User-Agent": USER_AGENT}
-    res = session.get(detail_url, headers=headers)
-    res.raise_for_status()
-    soup = BeautifulSoup(res.text, "lxml")
+def fetch_videos_by_genre(genre_id: int, hits: int) -> list[dict]:
+    url = "https://api.dmm.com/affiliate/v3/ItemList"
+    params = {
+        "api_id":        API_ID,
+        "affiliate_id":  AFFILIATE_ID,
+        "site":          "FANZA",
+        "service":       "digital",
+        "floor":         "videoa",
+        "mono_genre_id": genre_id,
+        "hits":          hits,
+        "sort":          "date",     # 新着順
+        "output":        "json"
+    }
+    print(f"=== Fetching genre {genre_id} ({hits}件) ===")
+    resp = requests.get(url, params=params)
+    try:
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        print(f"[Error] genre {genre_id} API request failed: {e}")
+        return []
 
-    # 説明文
-    desc_el = soup.select_one("#module-video-intro .text") or soup.select_one(".text")
-    description = desc_el.get_text(strip=True) if desc_el else "(説明文なし)"
+    result = resp.json().get("result", {})
+    items  = result.get("items", [])
+    print(f"  -> API returned {len(items)} items")
 
-    # 発売日（例: dl class="release" dd 要素）
-    date_el = soup.find("dl", class_="release")
-    release_date = None
-    if date_el:
-        dd = date_el.find("dd")
-        try:
-            release_date = datetime.strptime(dd.get_text(strip=True), "%Y-%m-%d").date()
-        except Exception:
-            pass
-
-    return description, release_date
-
-# ───────────────────────────────────────────────────────────
-# 人気順リストをスクレイピング
-# ───────────────────────────────────────────────────────────
-def fetch_videos_by_html(genre_id, hits):
-    url = f"https://video.dmm.co.jp/av/list/?genre={genre_id}&sort=ranking"
-    print(f"=== Fetching genre {genre_id} by ranking ({hits}件) ===")
-    session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
-    res = session.get(url)
-    res.raise_for_status()
-    soup = BeautifulSoup(res.text, "lxml")
-    cards = soup.select(".list-inner .item")[:hits]
     videos = []
-
-    for idx, card in enumerate(cards, start=1):
-        a = card.find("a", href=True)
-        if not a: continue
-        link = a["href"]
-        title = a.get("title") or a.get_text(strip=True)
-
-        img = card.find("img")
-        img_url = img.get("data-src") or img.get("src") or ""
-        if not img_url:
-            print(f"[Warning] No thumbnail for '{title}', skipping")
+    for i in items:
+        # メイン画像
+        img_info = i.get("imageURL", {}) or {}
+        main_img = img_info.get("large") or img_info.get("small") or ""
+        if not main_img:
+            print(f"[Warning] No main image for '{i.get('title')}', skipping")
             continue
 
-        # 詳細情報取得
-        description, release_date = fetch_detail(link, session)
-        if release_date and release_date > TODAY:
-            print(f"[Skip] '{title}' は発売前 ({release_date})")
-            continue
+        # サンプル画像取得（リスト形式）
+        sample_info = i.get("sampleImageURL", {}) or {}
+        samples = []
+        for val in sample_info.values():
+            if isinstance(val, list):
+                samples.extend(val)
+            elif isinstance(val, str):
+                samples.append(val)
 
-        # アフィリエイトリンク
-        aff_url = f"{link}?i3_ref=list&i3_ord={idx}&affiliate_id={AFFILIATE_ID}"
+        # 説明文
+        desc = i.get("description", "").strip() or "(説明文なし)"
 
         videos.append({
-            "title":       title.strip(),
-            "url":         aff_url,
-            "image_url":   img_url,
-            "description": description,
-            "genres":      [str(genre_id)],
-            "actors":      []
+            "title":       i.get("title", "").strip(),
+            "url":         i.get("affiliateURL", ""),
+            "image_url":   main_img,
+            "description": desc,
+            "genres":      [g.get("name") for g in i.get("genre", [])],
+            "actors":      [a.get("name") for a in i.get("actor", [])],
+            "samples":     samples
         })
-        print(f"  ■ Fetched [{idx}]: {title}")
-        time.sleep(1)
-
-    print(f"=== Finished fetching {len(videos)} videos ===")
     return videos
 
 # ───────────────────────────────────────────────────────────
-# WordPressへ投稿
+# WordPressに投稿
 # ───────────────────────────────────────────────────────────
-def post_to_wp(item):
+def post_to_wp(item: dict):
     print(f"--> Posting: {item['title']}")
     wp = Client(WP_URL, WP_USER, WP_PASS)
 
-    # サムネイルアップロード
+    # 1) サムネイル画像アップロード
     img_data = requests.get(item["image_url"]).content
     data = {
         "name": os.path.basename(item["image_url"]),
@@ -120,33 +104,44 @@ def post_to_wp(item):
     attachment_url = resp["url"]
     attachment_id  = resp["id"]
 
-    # 記事本文作成
-    html = (
-        f'<p><a href="{item["url"]}" target="_blank">'
-        f'<img src="{attachment_url}" alt="{item["title"]}"/></a></p>'
-        f'<p>{item["description"]}</p>'
-        f'<p><a href="{item["url"]}" target="_blank">▶ 詳細・購入はこちら</a></p>'
-    )
+    # 2) 記事本文HTML組み立て
+    html = []
+    # メインサムネイル
+    html.append(f'<p><a href="{item["url"]}" target="_blank"><img src="{attachment_url}" alt="{item["title"]}"/></a></p>')
+    # 説明文
+    html.append(f'<p>{item["description"]}</p>')
+    # サンプル画像
+    for sample_url in item.get("samples", []):
+        html.append(f'<p><img src="{sample_url}" alt="サンプル画像"/></p>')
+    # アフィリエイトリンク
+    html.append(f'<p><a href="{item["url"]}" target="_blank">▶ 詳細・購入はこちら</a></p>')
 
     post = WordPressPost()
     post.title       = item["title"]
-    post.content     = html
+    post.content     = "\n".join(html)
     post.thumbnail   = attachment_id
     post.terms_names = {
         "category": ["DMM動画", "AV"],
         "post_tag": item["genres"] + item["actors"]
     }
     post.post_status = "publish"
+
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {item['title']}")
 
 # ───────────────────────────────────────────────────────────
-# エントリポイント
+# メイン処理
 # ───────────────────────────────────────────────────────────
 def main():
     print("=== Job start ===")
-    videos = fetch_videos_by_html(GENRE_ID, HITS)
-    for vid in videos:
+    all_videos = []
+    for gid in GENRE_IDS:
+        vids = fetch_videos_by_genre(gid, HITS)
+        all_videos.extend(vids)
+        time.sleep(1)
+
+    print(f"=== Total to post: {len(all_videos)} videos ===")
+    for vid in all_videos:
         try:
             post_to_wp(vid)
             time.sleep(1)
