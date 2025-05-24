@@ -37,7 +37,6 @@ if not API_ID or not AFFILIATE_ID:
 # ───────────────────────────────────────────────────────────
 # HTTP GET with age_check bypass
 # ───────────────────────────────────────────────────────────
-
 def fetch_page(url: str, session: requests.Session) -> requests.Response:
     headers = {"User-Agent": USER_AGENT}
     res = session.get(url, headers=headers)
@@ -59,7 +58,6 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
 # ───────────────────────────────────────────────────────────
 # Detail page scrape: description only
 # ───────────────────────────────────────────────────────────
-
 def fetch_description(detail_url: str, session: requests.Session) -> str:
     res = fetch_page(detail_url, session)
     soup = BeautifulSoup(res.text, "lxml")
@@ -69,50 +67,52 @@ def fetch_description(detail_url: str, session: requests.Session) -> str:
 # ───────────────────────────────────────────────────────────
 # Fetch items via API then enrich with HTML scrape
 # ───────────────────────────────────────────────────────────
-
 def fetch_videos_by_genres(genre_ids, hits):
     api_url = "https://api.dmm.com/affiliate/v3/ItemList"
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
     items_out = []
-
     for genre_id in genre_ids:
         params = {
-            "api_id":        API_ID,
-            "affiliate_id":  AFFILIATE_ID,
-            "site":          "FANZA",
-            "service":       "digital",
-            "floor":         "videoa",
-            "mono_genre_id": genre_id,
-            "hits":          hits,
-            "sort":          "rank",
-            "output":        "json"
+            "api_id":       API_ID,
+            "affiliate_id": AFFILIATE_ID,
+            "site":         "FANZA",
+            "service":      "digital",
+            "floor":        "videoa",
+            "mono_genre_id":genre_id,
+            "hits":         hits,
+            "sort":         "rank",
+            "output":       "json"
         }
         print(f"Fetching genre {genre_id}, {hits} items by ranking...")
         resp = requests.get(api_url, params=params)
         resp.raise_for_status()
-        result = resp.json().get("result", {}).get("items", [])
-
-        for i in result:
+        items = resp.json().get("result", {}).get("items", [])
+        for i in items:
             title = i.get("title", "").strip()
             aff_url = i.get("affiliateURL", "")
-            detail_url = aff_url.split("?")[0]
+            # Detail page URL: use API URL field
+            url_info = i.get("URL") or {}
+            if isinstance(url_info, dict):
+                detail_url = url_info.get("pc") or url_info.get("list") or ""
+            else:
+                detail_url = ""
+            # Main thumbnail
             img_info = i.get("imageURL", {}) or {}
             thumb = img_info.get("large") or img_info.get("small") or ""
-            # Scrape description
+            # Fetch and summarize description
             description = ""
-            try:
-                description = fetch_description(detail_url, session)
-            except Exception as e:
-                print(f"Warning: description fetch failed for {title}: {e}")
+            if detail_url:
+                try:
+                    description = fetch_description(detail_url, session)
+                except Exception as e:
+                    print(f"Warning: description fetch failed for {title}: {e}")
             if not description:
                 description = i.get("description", "").strip()
-            # Summarize
             summary = textwrap.shorten(description, width=200, placeholder="…")
-
             items_out.append({
                 "title": title,
-                "url": aff_url,
+                "url":   aff_url,
                 "thumb": thumb,
                 "summary": summary,
                 "genres": [g.get("name") for g in i.get("genre", [])],
@@ -120,35 +120,31 @@ def fetch_videos_by_genres(genre_ids, hits):
             })
             print(f"Fetched: {title}")
             time.sleep(1)
-
     return items_out
 
 # ───────────────────────────────────────────────────────────
 # Post to WordPress with duplicate check
 # ───────────────────────────────────────────────────────────
-
 def post_to_wp(item: dict):
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    existing = wp.call(GetPosts({'post_status': 'publish', 's': item['title']}))
+    existing = wp.call(GetPosts({'post_status':'publish','s':item['title']}))
     if any(p.title == item['title'] for p in existing):
         print(f"Skipping duplicate: {item['title']}")
         return
-    # Upload thumbnail
+    thumb_id = None
     if item['thumb']:
         img_data = requests.get(item['thumb']).content
-        data = {"name": os.path.basename(item['thumb']), "type": "image/jpeg", "bits": xmlrpc_client.Binary(img_data)}
+        data = {"name": os.path.basename(item['thumb']),"type":"image/jpeg","bits":xmlrpc_client.Binary(img_data)}
         resp = wp.call(media.UploadFile(data))
         thumb_id = resp.get("id")
-    else:
-        thumb_id = None
-    # Build content
-    content = f"<p>{item['summary']}</p><p><a href='{item['url']}' target='_blank'>▶ 詳細・購入はこちら</a></p>"
+    content = f"<p>{item['summary']}</p>"
+    content += f"<p><a href='{item['url']}' target='_blank'>▶ 詳細・購入はこちら</a></p>"
     post = WordPressPost()
     post.title = item['title']
     post.content = content
     if thumb_id:
         post.thumbnail = thumb_id
-    post.terms_names = {"category": ["DMM動画"], "post_tag": item['genres'] + item['actors']}
+    post.terms_names = {"category":["DMM動画"],"post_tag":item['genres']+item['actors']}
     post.post_status = 'publish'
     wp.call(posts.NewPost(post))
     print(f"Posted: {item['title']}")
@@ -156,7 +152,6 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 # Main
 # ───────────────────────────────────────────────────────────
-
 def main():
     videos = fetch_videos_by_genres(GENRE_IDS, HITS)
     for vid in videos:
