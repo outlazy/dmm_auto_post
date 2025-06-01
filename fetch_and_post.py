@@ -29,7 +29,7 @@ if not WP_URL or not WP_USER or not WP_PASS:
 # HTML スクレイピングで最新アマチュア動画を取得
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos(max_items: int):
-        LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
+    LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120" "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
     headers = {"User-Agent": USER_AGENT}
     resp = requests.get(LIST_URL, headers=headers)
     resp.raise_for_status()
