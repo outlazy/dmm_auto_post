@@ -5,7 +5,6 @@ import os
 import time
 import requests
 import textwrap
-from collections import abc as collections_abc
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
@@ -21,7 +20,7 @@ WP_URL    = os.getenv("WP_URL")
 WP_USER   = os.getenv("WP_USER")
 WP_PASS   = os.getenv("WP_PASS")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-# アマチュアビデオ一覧（最新複数件）取得
+# 一覧ページ（最新複数件）取得 URL
 LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date&limit=120"
 MAX_ITEMS  = int(os.getenv("HITS", 5))  # 環境変数 HITS を使用して件数指定
 
@@ -29,7 +28,7 @@ if not WP_URL or not WP_USER or not WP_PASS:
     raise RuntimeError("環境変数 WP_URL / WP_USER / WP_PASS が設定されていません")
 
 # ───────────────────────────────────────────────────────────
-# HTTP GET + age_check bypass
+# HTTP GET + 年齢認証バイパス
 # ───────────────────────────────────────────────────────────
 def fetch_page(url: str, session: requests.Session) -> requests.Response:
     headers = {"User-Agent": USER_AGENT}
@@ -50,13 +49,16 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
     return res
 
 # ───────────────────────────────────────────────────────────
-# 詳細ページから説明文取得
+# 詳細ページから説明文を取得
 # ───────────────────────────────────────────────────────────
 def fetch_description(detail_url: str, session: requests.Session) -> str:
-    res = fetch_page(detail_url, session)
-    soup = BeautifulSoup(res.text, "lxml")
-    desc_el = soup.select_one("div.mg-b20.lh4")
-    return desc_el.get_text(strip=True) if desc_el else ""
+    try:
+        res = fetch_page(detail_url, session)
+        soup = BeautifulSoup(res.text, "lxml")
+        desc_el = soup.select_one("div.mg-b20.lh4")
+        return desc_el.get_text(strip=True) if desc_el else ""
+    except:
+        return ""
 
 # ───────────────────────────────────────────────────────────
 # 一覧ページから最新HITS件の動画情報を抽出
@@ -69,13 +71,11 @@ def fetch_latest_videos(max_items: int):
 
     videos = []
     seen = set()
-        # ◆ リンク抽出を強化: 絶対URLと相対URLの両方をチェック
-        for a in soup.find_all("a", href=True):
+    # リンク抽出: アマチュア (/amateur/-/detail/) または デジタル (/videoc/-/detail/)
+    for a in soup.find_all("a", href=True):
         href = a["href"]
-        # 動画詳細リンクのパターン: アマチュアもしくはデジタル
         if not any(pat in href for pat in ["/amateur/-/detail/", "/videoc/-/detail/"]):
             continue
-        # detail_url を構築（絶対URLの場合はそのまま、相対URLの場合はドメインを付与）
         if href.startswith("http"):
             detail_url = href
         else:
@@ -87,42 +87,7 @@ def fetch_latest_videos(max_items: int):
             continue
         thumb = img.get("src", "")
         title = img.get("alt", "").strip() if img.get("alt") else a.get_text(strip=True)
-        description = ""
-        try:
-            description = fetch_description(detail_url, session)
-        except:
-            description = ""
-        videos.append({
-            "title": title,
-            "detail_url": detail_url,
-            "thumb": thumb,
-            "description": description
-        })
-        seen.add(detail_url)
-        if len(videos) >= max_items:
-            break
-    return videos("a", href=True):
-        href = a["href"]
-        # 相対パスと絶対パスの両方を検出
-        if "/amateur/-/detail/" not in href and "https://video.dmm.co.jp/amateur/-/detail/" not in href:
-            continue
-        # detail_url を構築（絶対URLの場合はそのまま、相対URLの場合はドメインを付与）
-        if href.startswith("http"):
-            detail_url = href
-        else:
-            detail_url = f"https://video.dmm.co.jp{href}"
-        if detail_url in seen:
-            continue
-        img = a.find("img")
-        if not img:
-            continue
-        thumb = img.get("src", "")
-        title = img.get("alt", "").strip() if img.get("alt") else a.get_text(strip=True)
-        description = ""
-        try:
-            description = fetch_description(detail_url, session)
-        except:
-            description = ""
+        description = fetch_description(detail_url, session)
         videos.append({
             "title": title,
             "detail_url": detail_url,
@@ -177,7 +142,7 @@ def post_to_wp(item: dict):
     print(f"✔ Posted: {item['title']}")
 
 # ───────────────────────────────────────────────────────────
-# メイン
+# メイン処理
 # ───────────────────────────────────────────────────────────
 def main():
     print(f"=== Job start: fetching top {MAX_ITEMS} videos from amateur list ===")
