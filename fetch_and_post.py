@@ -30,11 +30,19 @@ if not WP_URL or not WP_USER or not WP_PASS:
 # ───────────────────────────────────────────────────────────
 
 def fetch_latest_videos(max_items: int):
+    # セッションを使って年齢認証をバイパス
+    session = requests.Session()
+    session.headers.update({"User-Agent": USER_AGENT})
+    # 年齢認証フォーム送信
+    try:
+        session.post("https://www.dmm.co.jp/my/-/service/=/security_age/", data={"adult": "ok"})
+    except:
+        pass
+
     LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
-    headers = {"User-Agent": USER_AGENT}
-    resp = requests.get(LIST_URL, headers=headers)
+    resp = session.get(LIST_URL)
     resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(resp.text, "html.parser")(resp.text, "html.parser")
 
     videos = []
     seen = set()
