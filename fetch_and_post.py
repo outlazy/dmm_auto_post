@@ -3,7 +3,6 @@
 
 import os
 import time
-import re
 import requests
 import collections
 from collections import abc as collections_abc
@@ -15,6 +14,7 @@ from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 import textwrap
+import re
 
 # ───────────────────────────────────────────────────────────
 # 環境変数読み込み
@@ -24,7 +24,7 @@ WP_URL    = os.getenv("WP_URL")
 WP_USER   = os.getenv("WP_USER")
 WP_PASS   = os.getenv("WP_PASS")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
+LIST_URL   = "https://www.dmm.co.jp/amateur/list/?sort=date"
 MAX_ITEMS  = int(os.getenv("HITS", 5))
 
 if not WP_URL or not WP_USER or not WP_PASS:
@@ -33,21 +33,22 @@ if not WP_URL or not WP_USER or not WP_PASS:
 # ───────────────────────────────────────────────────────────
 # HTTP GET + age_check bypass
 # ───────────────────────────────────────────────────────────
+
 def fetch_page(url: str, session: requests.Session) -> requests.Response:
     headers = {"User-Agent": USER_AGENT}
     res = session.get(url, headers=headers)
-    if "age_check" in res.url:
+    # age check redirect contains "age_check" or English version
+    if "age_check" in res.url or "en/age_check" in res.url:
         soup = BeautifulSoup(res.text, "lxml")
+        # フォームによる同意
         form = soup.find("form")
         if form and form.get("action"):
             action = form["action"]
-            data = {
-                inp.get("name"): inp.get("value", "")
-                for inp in form.find_all("input", {"name": True})
-            }
+            data = { inp.get("name"): inp.get("value", "") for inp in form.find_all("input", {"name": True}) }
             session.post(action, data=data, headers=headers)
         else:
-            agree = soup.find("a", string=lambda t: t and "同意する" in t)
+            # 英語「I Agree」リンク
+            agree = soup.find("a", string=lambda t: t and ("I Agree" in t or "同意する" in t))
             if agree and agree.get("href"):
                 session.get(agree["href"], headers=headers)
         res = session.get(url, headers=headers)
@@ -57,6 +58,7 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
 # ───────────────────────────────────────────────────────────
 # 詳細ページから説明文取得
 # ───────────────────────────────────────────────────────────
+
 def fetch_description(detail_url: str, session: requests.Session) -> str:
     res = fetch_page(detail_url, session)
     soup = BeautifulSoup(res.text, "lxml")
@@ -66,6 +68,7 @@ def fetch_description(detail_url: str, session: requests.Session) -> str:
 # ───────────────────────────────────────────────────────────
 # 一覧ページから動画情報を抽出
 # ───────────────────────────────────────────────────────────
+
 def fetch_videos_from_list(max_items: int):
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
@@ -73,20 +76,21 @@ def fetch_videos_from_list(max_items: int):
     soup = BeautifulSoup(resp.text, "lxml")
 
     videos = []
-    # 各動画リンクは "/amateur/-/detail/" を含む <a> タグ
-    anchors = soup.find_all("a", href=re.compile(r"/amateur/-/detail/"))
     seen = set()
-    for a in anchors:
+    # 各動画は <li class="list-box"> 内の <a> でリンク
+    for li in soup.select("li.list-box"):
+        a = li.find("a", href=re.compile(r"/amateur/-/detail/"))
+        if not a:
+            continue
         href = a.get("href")
-        # URLが相対パスの場合は https://www.dmm.co.jp を付与
         detail_url = href if href.startswith("http") else f"https://www.dmm.co.jp{href}"
         if detail_url in seen:
             continue
         seen.add(detail_url)
-        # サムネイル画像は <img> タグの src
-        img = a.find("img")
-        thumb = img["src"] if img and img.get("src") else ""
-        # タイトルは img の alt 属性、なければリンクテキスト
+        # サムネイル
+        img = li.find("img")
+        thumb = img.get("src", "") if img else ""
+        # タイトル
         title = img.get("alt", "").strip() if img and img.get("alt") else a.get_text(strip=True)
         if not title:
             continue
@@ -102,6 +106,7 @@ def fetch_videos_from_list(max_items: int):
 # ───────────────────────────────────────────────────────────
 # WordPressに投稿（重複チェック付き）
 # ───────────────────────────────────────────────────────────
+
 def post_to_wp(item: dict):
     wp = Client(WP_URL, WP_USER, WP_PASS)
     existing = wp.call(GetPosts({"post_status": "publish", "s": item["title"]}))
@@ -124,7 +129,7 @@ def post_to_wp(item: dict):
         except Exception as e:
             print(f"Warning: thumbnail upload failed for {item['title']}: {e}")
 
-    # 詳細ページから説明文を取得し要約
+    # 詳細ページから説明文を取得して要約
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
     description = ""
@@ -132,7 +137,9 @@ def post_to_wp(item: dict):
         description = fetch_description(item["detail_url"], session)
     except Exception as e:
         print(f"Warning: description fetch failed for {item['title']}: {e}")
-    summary = textwrap.shorten(description or "(説明文なし)", width=200, placeholder="…")
+    if not description:
+        description = "(説明文なし)"
+    summary = textwrap.shorten(description, width=200, placeholder="…")
 
     # 本文組み立て
     content = f"<p>{summary}</p>\n"
@@ -143,7 +150,6 @@ def post_to_wp(item: dict):
     post.content = content
     if thumb_id:
         post.thumbnail = thumb_id
-    # カテゴリとタグを設定（必要に応じて変更）
     post.terms_names = {"category": ["DMM動画"], "post_tag": []}
     post.post_status = "publish"
     wp.call(posts.NewPost(post))
@@ -152,6 +158,7 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 # メイン
 # ───────────────────────────────────────────────────────────
+
 def main():
     print(f"=== Job start: fetching top {MAX_ITEMS} videos from amateur list ===")
     videos = fetch_videos_from_list(MAX_ITEMS)
