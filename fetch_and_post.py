@@ -10,6 +10,7 @@ from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
+from bs4 import BeautifulSoup
 
 # ───────────────────────────────────────────────────────────
 # 環境変数読み込み
@@ -18,73 +19,51 @@ load_dotenv()
 WP_URL    = os.getenv("WP_URL")
 WP_USER   = os.getenv("WP_USER")
 WP_PASS   = os.getenv("WP_PASS")
-API_ID    = os.getenv("DMM_API_ID")
-AFF_ID    = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 MAX_ITEMS  = int(os.getenv("HITS", 5))  # 環境変数 HITS を使用して件数指定
 
 if not WP_URL or not WP_USER or not WP_PASS:
     raise RuntimeError("環境変数 WP_URL / WP_USER / WP_PASS が設定されていません")
-if not API_ID or not AFF_ID:
-    raise RuntimeError("環境変数 DMM_API_ID / DMM_AFFILIATE_ID が設定されていません")
 
 # ───────────────────────────────────────────────────────────
-# API から最新アマチュア動画を取得
+# HTML スクレイピングで最新アマチュア動画を取得
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos(max_items: int):
-    # ① GenreSearch で「アマチュア」ジャンルIDを取得
-    genre_url = "https://api.dmm.com/affiliate/v3/GenreSearch"
-    genre_params = {
-        "api_id": API_ID,
-        "affiliate_id": AFF_ID,
-        "site": "DMM.R18",
-        "service": "digital",
-        "floor": "videoa",
-        "output": "json"
-    }
-    genre_resp = requests.get(genre_url, params=genre_params, headers={"User-Agent": USER_AGENT})
-    genre_resp.raise_for_status()
-    genre_data = genre_resp.json()
-    items_genre = genre_data.get("result", {}).get("genres", [])
-    amateur_genre_id = None
-    for g in items_genre:
-        if "アマチュア" in g.get("name", ""):
-            amateur_genre_id = g.get("id")
-            break
-    if not amateur_genre_id:
-        raise RuntimeError("アマチュアジャンルが見つかりませんでした")
+        LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
+    headers = {"User-Agent": USER_AGENT}
+    resp = requests.get(LIST_URL, headers=headers)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
 
-    # ② ItemList でアマチュア作品を取得
-    item_url = "https://api.dmm.com/affiliate/v3/ItemList"
-    item_params = {
-        "api_id": API_ID,
-        "affiliate_id": AFF_ID,
-        "site": "FANZA",
-        "service": "digital",
-        "floor": "videoa",               # AV作品フロア
-        "mono_genre_id": amateur_genre_id, # アマチュアジャンル
-        "sort": "date",                  # 新着順
-        "hits": max_items,
-        "output": "json"
-    }
-    resp = requests.get(item_url, params=item_params, headers={"User-Agent": USER_AGENT})
-    try:
-        resp.raise_for_status()
-    except Exception:
-        print("API request failed:", resp.url)
-        print("Response:", resp.text)
-        raise
-    data = resp.json()
-    items = data.get("result", {}).get("items", [])
     videos = []
-    for item in items:
-        title = item.get("title", "").strip()
-        detail_url = item.get("URL", "")
-        img_urls = item.get("imageURL", {})
-        thumb = img_urls.get("small") or img_urls.get("large") or ""
-        description = item.get("description", "") or ""
+    # 各動画リストアイテムを取得 (liタグにクラス名"list__item"など)
+    items = soup.find_all("li", class_="list__item")
+    if not items:
+        items = soup.find_all("li", class_="item")  # 代替クラス名
+
+    for li in items[:max_items]:
+        a = li.find("a", href=True)
+        if not a:
+            continue
+        detail_url = a["href"]
+        title = a.get("title", a.get_text(strip=True))
+        img = li.find("img")
+        thumb = img["src"] if img and img.get("src") else ""
+
+        # 詳細ページから説明を取得
+        description = ""
+        try:
+            d_resp = requests.get(detail_url, headers=headers)
+            d_resp.raise_for_status()
+            d_soup = BeautifulSoup(d_resp.text, "html.parser")
+            desc_div = d_soup.find("div", class_="mg-b20 lh4")
+            if desc_div:
+                description = desc_div.get_text(separator=" ", strip=True)
+        except:
+            description = ""
+
         videos.append({
-            "title": title,
+            "title": title.strip(),
             "detail_url": detail_url,
             "thumb": thumb,
             "description": description
@@ -92,7 +71,7 @@ def fetch_latest_videos(max_items: int):
     return videos
 
 # ───────────────────────────────────────────────────────────
-# WordPressに投稿（重複チェック付き）
+# WordPress に投稿（重複チェック付き）
 # ───────────────────────────────────────────────────────────
 def post_to_wp(item: dict):
     wp = Client(WP_URL, WP_USER, WP_PASS)
@@ -115,12 +94,12 @@ def post_to_wp(item: dict):
         except Exception as e:
             print(f"Warning: thumbnail upload failed for {item['title']}: {e}")
 
-    description = item.get("description", "") or ""
-    if not description:
-        description = "(説明文なし)"
+    description = item.get("description", "") or "(説明文なし)"
     summary = textwrap.shorten(description, width=200, placeholder="…")
 
     content = f"<p>{summary}</p>\n"
+    if thumb_id:
+        content += f"<p><img src=\"{item['thumb']}\" alt=\"{item['title']}\"></p>\n"
     content += f"<p><a href=\"{item['detail_url']}\" target=\"_blank\">▶ 詳細・購入はこちら</a></p>"
 
     post = WordPressPost()
@@ -137,7 +116,7 @@ def post_to_wp(item: dict):
 # メイン処理
 # ───────────────────────────────────────────────────────────
 def main():
-    print(f"=== Job start: fetching top {MAX_ITEMS} videos from DMM API ===")
+    print(f"=== Job start: fetching top {MAX_ITEMS} videos via HTML scrape ===")
     videos = fetch_latest_videos(MAX_ITEMS)
     print(f"Fetched {len(videos)} videos.")
     for vid in videos:
