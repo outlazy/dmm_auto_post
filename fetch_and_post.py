@@ -38,23 +38,28 @@ def fetch_latest_videos(max_items: int):
 
     videos = []
     seen = set()
-
-    # ① li.list__item 内の <img> を探す
-    for li in soup.select("li.list__item"):
-        a = li.find("a", href=True)
-        img = li.find("img")
-        if not a or not img:
-            continue
+    # <a>タグを全て調べ、'/detail/' を含み、子に <img> があり、img の src に '/amateur/' を含むものを抽出
+    for a in soup.find_all("a", href=True):
         detail_url = a["href"]
+        if "/detail/" not in detail_url:
+            continue
         if detail_url in seen:
             continue
+        img = a.find("img")
+        if not img:
+            continue
+        src = img.get("src", "")
+        if "/amateur/" not in src:
+            continue
         title = img.get("alt", "").strip() or img.get("title", "").strip()
-        thumb = img.get("src", "")
+        thumb = src
         description = _fetch_description(detail_url, headers)
+
         videos.append({"title": title, "detail_url": detail_url, "thumb": thumb, "description": description})
         seen.add(detail_url)
         if len(videos) >= max_items:
-            return videos
+            break
+    return videos
 
     # ② li.item 内の <img> を探す
     for li in soup.select("li.item"):
