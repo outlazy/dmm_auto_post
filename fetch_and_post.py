@@ -6,7 +6,15 @@ import collections
 import collections.abc
 # Python3.10+ では collections.Iterable が collections.abc.Iterable に移動したため、互換性を確保
 collections.Iterable = collections.abc.Iterable
+
+import requests
+import textwrap
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from wordpress_xmlrpc import Client, WordPressPost
+from wordpress_xmlrpc.methods import media, posts
+from wordpress_xmlrpc.methods.posts import GetPosts
+from wordpress_xmlrpc.compat import xmlrpc_client
 
 # ───────────────────────────────────────────────────────────
 # 環境変数読み込み
@@ -22,7 +30,23 @@ if not WP_URL or not WP_USER or not WP_PASS:
     raise RuntimeError("環境変数 WP_URL / WP_USER / WP_PASS が設定されていません")
 
 # ───────────────────────────────────────────────────────────
-# DMM API で最新アマチュア動画を取得
+# HTML から説明文を取得（必要に応じて呼び出し）
+# ───────────────────────────────────────────────────────────
+
+def _fetch_description(url: str, headers: dict) -> str:
+    try:
+        d_resp = requests.get(url, headers=headers)
+        d_resp.raise_for_status()
+        d_soup = BeautifulSoup(d_resp.text, "html.parser")
+        desc_div = d_soup.find("div", class_="mg-b20 lh4")
+        if desc_div:
+            return desc_div.get_text(separator=" ", strip=True)
+    except:
+        pass
+    return ""
+
+# ───────────────────────────────────────────────────────────
+# HTMLスクレイピングで最新のアマチュア動画を取得
 # ───────────────────────────────────────────────────────────
 
 def fetch_latest_videos(max_items: int):
@@ -70,20 +94,6 @@ def fetch_latest_videos(max_items: int):
             break
     return videos
 
-# 説明文取得は API から直接取得済みなので不要だが、HTML からも取れるよう残す
-# （必要に応じて呼び出しはしない）
-def _fetch_description(url: str, headers: dict) -> str:
-    try:
-        d_resp = requests.get(url, headers=headers)
-        d_resp.raise_for_status()
-        d_soup = BeautifulSoup(d_resp.text, "html.parser")
-        desc_div = d_soup.find("div", class_="mg-b20 lh4")
-        if desc_div:
-            return desc_div.get_text(separator=" ", strip=True)
-    except:
-        pass
-    return ""
-
 # ───────────────────────────────────────────────────────────
 # WordPress に投稿（重複チェック付き）
 # ───────────────────────────────────────────────────────────
@@ -112,9 +122,11 @@ def post_to_wp(item: dict):
     description = item.get("description", "") or "(説明文なし)"
     summary = textwrap.shorten(description, width=200, placeholder="…")
 
-    content = f"<p>{summary}</p>\n"
+    content = f"<p>{summary}</p>
+"
     if thumb_id:
-        content += f"<p><img src=\"{item['thumb']}\" alt=\"{item['title']}\"></p>\n"
+        content += f"<p><img src=\"{item['thumb']}\" alt=\"{item['title']}\"></p>
+"
     content += f"<p><a href=\"{item['detail_url']}\" target=\"_blank\">▶ 詳細・購入はこちら</a></p>"
 
     post = WordPressPost()
@@ -132,7 +144,7 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 
 def main():
-    print(f"=== Job start: fetching top {MAX_ITEMS} videos via API ===")
+    print(f"=== Job start: fetching top {MAX_ITEMS} videos via HTML scrape ===")
     videos = fetch_latest_videos(MAX_ITEMS)
     print(f"Fetched {len(videos)} videos.")
     if not videos:
