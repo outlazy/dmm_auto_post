@@ -33,12 +33,11 @@ if not API_ID or not AFF_ID:
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos(max_items: int):
     url = "https://api.dmm.com/affiliate/v3/ItemList"
-    params = {
+        params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
-        "site": "DMM.R18",
-        "service": "digital",
-        "floor": "amateur",
+        "site": "FANZA",
+        "service": "digitalAmateur",
         "sort": "date",
         "hits": max_items,
         "output": "json"
