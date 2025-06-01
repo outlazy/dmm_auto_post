@@ -37,11 +37,15 @@ def fetch_latest_videos(max_items: int):
     soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
-    # 各動画リストアイテムを取得 (liタグにクラス名"list__item"など)
-    # DMMのアマチュア一覧ページでは、サムネイル画像を<a>で囲む<p class="tmb">要素がある
-    thumbs = soup.select("p.tmb > a")
-    for a in thumbs[:max_items]:
-        detail_url = a["href"]
+    seen = set()
+    # 詳細ページURLを含む<a>タグを抽出
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/detail/" not in href:
+            continue
+        detail_url = href
+        if detail_url in seen:
+            continue
         img = a.find("img")
         if not img:
             continue
@@ -66,6 +70,9 @@ def fetch_latest_videos(max_items: int):
             "thumb": thumb,
             "description": description
         })
+        seen.add(detail_url)
+        if len(videos) >= max_items:
+            break
     return videos
 
 # ───────────────────────────────────────────────────────────
