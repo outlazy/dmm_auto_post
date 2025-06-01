@@ -30,48 +30,47 @@ if not WP_URL or not WP_USER or not WP_PASS:
 # ───────────────────────────────────────────────────────────
 
 def fetch_latest_videos(max_items: int):
-    # セッションを使って年齢認証をバイパス
-    session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
-    try:
-        session.post(
-            "https://www.dmm.co.jp/my/-/service/=/security_age/", data={"adult": "ok"}
-        )
-    except:
-        pass
+    """DMM API を使って最新のアマチュア動画を取得"""
+    # 環境変数から API キーとアフィリエイト ID を取得
+    DMM_API_ID = os.getenv("DMM_API_ID")
+    DMM_AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
+    if not DMM_API_ID or not DMM_AFFILIATE_ID:
+        raise RuntimeError("環境変数 DMM_API_ID / DMM_AFFILIATE_ID が設定されていません")
 
-    LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
-    resp = session.get(LIST_URL)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    # API エンドポイントとパラメータを設定
+    API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
+    params = {
+        "api_id": DMM_API_ID,
+        "affiliate_id": DMM_AFFILIATE_ID,
+        "site": "FANZA",
+        "service": "digital",
+        # アマチュア動画は floor=digital_amateur
+        "floor": "digital_amateur",
+        "sort": "date",
+        "hits": max_items,
+        "output": "json"
+    }
+
+    response = requests.get(API_URL, params=params)
+    response.raise_for_status()
+    data = response.json()
+    items = data.get("result", {}).get("items", [])
 
     videos = []
-    seen = set()
-    # <img> タグからサムネイルを持つアマチュア動画を抽出
-    for img in soup.find_all("img", src=True):
-        src = img["src"]
-        # アマチュア作品のサムネイルURLには '/amateur/' が含まれる
-        if "/amateur/" not in src:
-            continue
-        # 親の <a> タグを取得
-        a = img.find_parent("a", href=True)
-        if not a:
-            continue
-        detail_url = a["href"]
-        # 詳細ページURLに '/detail/' が含まれていない場合はスキップ
-        if "/detail/" not in detail_url:
-            continue
-        # 重複チェック
-        if detail_url in seen:
-            continue
-        title = img.get("alt", "").strip() or img.get("title", "").strip()
-        thumb = src
-        description = _fetch_description(detail_url, session)
+    for i in items:
+        title = i.get("title", "").strip()
+        detail_url = i.get("URL", "")
+        # サムネイル取得 (large があれば large、なければ small)
+        img_info = i.get("imageURL", {})
+        thumb = img_info.get("large") or img_info.get("small", "")
+        description = i.get("description", "").strip()
 
-        videos.append({"title": title, "detail_url": detail_url, "thumb": thumb, "description": description})
-        seen.add(detail_url)
-        if len(videos) >= max_items:
-            break
+        videos.append({
+            "title": title,
+            "detail_url": detail_url,
+            "thumb": thumb,
+            "description": description
+        })
     return videos
 
     # ② li.item 内の <img> を探す
