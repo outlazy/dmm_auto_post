@@ -33,33 +33,36 @@ def fetch_latest_videos(max_items: int):
     # セッションを使って年齢認証をバイパス
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
-    # 年齢認証フォーム送信
     try:
-        session.post("https://www.dmm.co.jp/my/-/service/=/security_age/", data={"adult": "ok"})
+        session.post(
+            "https://www.dmm.co.jp/my/-/service/=/security_age/", data={"adult": "ok"}
+        )
     except:
         pass
 
     LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
     resp = session.get(LIST_URL)
     resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")(resp.text, "html.parser")
+    soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
     seen = set()
-    # DMMアマチュア一覧ページでは <ul class="d-item__list"> の中に <li class="d-item__item"> 要素がある
-    for li in soup.select("ul.d-item__list li.d-item__item"):
-        a = li.find("a", href=True)
-        if not a:
-            continue
+    # <a> タグから '/detail/' を含むリンクを抽出
+    for a in soup.find_all("a", href=True):
         detail_url = a["href"]
-        if "/detail/" not in detail_url or detail_url in seen:
+        if "/detail/" not in detail_url:
+            continue
+        if detail_url in seen:
             continue
         img = a.find("img")
         if not img:
             continue
         thumb = img.get("data-original") or img.get("src", "")
+        # サムネイルがアマチュア動画用か判定
+        if "/amateur/" not in thumb:
+            continue
         title = img.get("alt", "").strip() or img.get("title", "").strip()
-        description = _fetch_description(detail_url, headers)
+        description = _fetch_description(detail_url, session)
 
         videos.append({"title": title, "detail_url": detail_url, "thumb": thumb, "description": description})
         seen.add(detail_url)
