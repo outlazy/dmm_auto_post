@@ -32,19 +32,43 @@ if not API_ID or not AFF_ID:
 # API から最新動画を取得
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos(max_items: int):
+    # ① genreSearch で「アマチュア」ジャンルIDを取得
+    genre_url = "https://api.dmm.com/affiliate/v3/GenreSearch"
+    genre_params = {
+        "api_id": API_ID,
+        "affiliate_id": AFF_ID,
+        "site": "FANZA",
+        "service": "digital",
+        "floor": "videoa",  # 一般作品（AV）
+        "output": "json"
+    }
+    genre_resp = requests.get(genre_url, params=genre_params, headers={"User-Agent": USER_AGENT})
+    genre_resp.raise_for_status()
+    genre_data = genre_resp.json()
+    items_genre = genre_data.get("result", {}).get("genres", [])
+    # 名前に 'アマチュア' を含むジャンルを探す
+    amateur_genre_id = None
+    for g in items_genre:
+        if "アマチュア" in g.get("name", ""):
+            amateur_genre_id = g.get("id")
+            break
+    if not amateur_genre_id:
+        raise RuntimeError("アマチュアジャンルが見つかりませんでした")
+
+    # ② ItemList でアマチュア作品を取得
     url = "https://api.dmm.com/affiliate/v3/ItemList"
-    # アマチュア作品用の正しいパラメータ：site=DMM.R18, service=digitalAmateur
     params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
-        "site": "DMM.R18",
-        "service": "digitalAmateur",
+        "site": "FANZA",
+        "service": "digital",
+        "floor": "videoa",
+        "mono_genre_id": amateur_genre_id,
         "sort": "date",
         "hits": max_items,
         "output": "json"
     }
-    headers = {"User-Agent": USER_AGENT}
-    resp = requests.get(url, params=params, headers=headers)
+    resp = requests.get(url, params=params, headers={"User-Agent": USER_AGENT})
     try:
         resp.raise_for_status()
     except Exception:
