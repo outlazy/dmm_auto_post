@@ -4,17 +4,14 @@
 import os
 import time
 import requests
-import collections
+import textwrap
 from collections import abc as collections_abc
-from datetime import datetime
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
-import textwrap
-import re
 
 # ───────────────────────────────────────────────────────────
 # 環境変数読み込み
@@ -34,7 +31,6 @@ if not WP_URL or not WP_USER or not WP_PASS:
 # ───────────────────────────────────────────────────────────
 # HTTP GET + age_check bypass
 # ───────────────────────────────────────────────────────────
-
 def fetch_page(url: str, session: requests.Session) -> requests.Response:
     headers = {"User-Agent": USER_AGENT}
     res = session.get(url, headers=headers)
@@ -56,7 +52,6 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
 # ───────────────────────────────────────────────────────────
 # 詳細ページから説明文取得
 # ───────────────────────────────────────────────────────────
-
 def fetch_description(detail_url: str, session: requests.Session) -> str:
     res = fetch_page(detail_url, session)
     soup = BeautifulSoup(res.text, "lxml")
@@ -66,12 +61,12 @@ def fetch_description(detail_url: str, session: requests.Session) -> str:
 # ───────────────────────────────────────────────────────────
 # 一覧ページから最新HITS件の動画情報を抽出
 # ───────────────────────────────────────────────────────────
-
 def fetch_latest_videos(max_items: int):
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
     resp = fetch_page(LIST_URL, session)
     soup = BeautifulSoup(resp.text, "lxml")
+
     videos = []
     seen = set()
     for a in soup.find_all("a", href=True):
@@ -105,7 +100,6 @@ def fetch_latest_videos(max_items: int):
 # ───────────────────────────────────────────────────────────
 # WordPressに投稿（重複チェック付き）
 # ───────────────────────────────────────────────────────────
-
 def post_to_wp(item: dict):
     wp = Client(WP_URL, WP_USER, WP_PASS)
     existing = wp.call(GetPosts({"post_status": "publish", "s": item["title"]}))
@@ -148,7 +142,6 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 # メイン
 # ───────────────────────────────────────────────────────────
-
 def main():
     print(f"=== Job start: fetching top {MAX_ITEMS} videos from amateur list ===")
     videos = fetch_latest_videos(MAX_ITEMS)
