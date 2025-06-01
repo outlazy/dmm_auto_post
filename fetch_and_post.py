@@ -38,19 +38,20 @@ def fetch_latest_videos(max_items: int):
 
     videos = []
     seen = set()
-    # 詳細ページURLを含む<a>タグを抽出
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/detail/" not in href:
+    # サムネイル画像を含む<img>タグから動画を抽出
+    for img in soup.find_all("img"):  
+        src = img.get("src", "")
+        # アマチュア作品のサムネイルURLは '/amateur/' を含む
+        if "/amateur/" not in src:
             continue
-        detail_url = href
-        if detail_url in seen:
+        a = img.find_parent("a", href=True)
+        if not a:
             continue
-        img = a.find("img")
-        if not img:
+        detail_url = a["href"]
+        if detail_url in seen or "/detail/" not in detail_url:
             continue
         title = img.get("alt", "").strip() or img.get("title", "").strip()
-        thumb = img.get("src", "")
+        thumb = src
 
         # 詳細ページから説明を取得
         description = ""
