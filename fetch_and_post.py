@@ -72,9 +72,12 @@ def fetch_latest_videos(max_items: int):
     videos = []
     seen = set()
     # リンク抽出: アマチュア (/amateur/-/detail/) または デジタル (/videoc/-/detail/)
+        # リンク抽出: detail URL が /amateur/-/detail/=/cid=.../ または /videoc/-/detail/=/cid=.../ パターン
+    import re
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if not any(pat in href for pat in ["/amateur/-/detail/", "/videoc/-/detail/"]):
+        # 正規表現で detail ページを検出
+        if not re.search(r"/(?:amateur|videoc)/-/detail/=+/cid=[^/]+/", href):
             continue
         if href.startswith("http"):
             detail_url = href
