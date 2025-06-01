@@ -73,7 +73,7 @@ def fetch_latest_video():
     params = {
         "api_id":       os.getenv("DMM_API_ID"),
         "affiliate_id": os.getenv("DMM_AFFILIATE_ID"),
-        "site":         "FANZA",
+        "site":         "DMM.R18",
         "service":      "digital",
         "floor":        "amateur",
         "hits":         1,
