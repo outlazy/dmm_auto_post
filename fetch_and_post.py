@@ -37,7 +37,7 @@ def fetch_latest_videos(max_items: int):
     params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
-        "site": "DMM.R18",
+        "site": "FANZA",
         "service": "digital",
         "floor": "amateur",
         "sort": "date",
