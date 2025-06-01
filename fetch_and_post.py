@@ -122,6 +122,7 @@ def post_to_wp(item: dict):
     summary = textwrap.shorten(description, width=200, placeholder="…")
 
         content = f"<p>{summary}</p>
+"
 ""
     content += f"<p><a href=\"{item['detail_url']}\" target=\"_blank\">▶ 詳細・購入はこちら</a></p>"
 
