@@ -5,6 +5,7 @@ import os
 import time
 import requests
 import textwrap
+import re
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
@@ -71,13 +72,11 @@ def fetch_latest_videos(max_items: int):
 
     videos = []
     seen = set()
-    # リンク抽出: アマチュア (/amateur/-/detail/) または デジタル (/videoc/-/detail/)
-        # リンク抽出: detail URL が /amateur/-/detail/=/cid=.../ または /videoc/-/detail/=/cid=.../ パターン
-    import re
+    # リンク抽出: detail URL が /amateur/-/detail/=/cid=.../ または /videoc/-/detail/=/cid=.../ パターン
     for a in soup.find_all("a", href=True):
         href = a["href"]
         # 正規表現で detail ページを検出
-        if not re.search(r"/(?:amateur|videoc)/-/detail/=+/cid=[^/]+/", href):
+        if not re.search(r"/(?:amateur|videoc)/-/detail/=/cid=[^/]+/", href):
             continue
         if href.startswith("http"):
             detail_url = href
