@@ -91,7 +91,7 @@ def fetch_latest_video():
         description = fetch_description(detail_url, session)
     except:
         description = ""
-    return {"title": title, "detail_url": detail_url, "thumb": thumb, "description": description} "detail_url": detail_url, "thumb": thumb, "description": description}
+    return {"title": title, "detail_url": detail_url, "thumb": thumb, "description": description}
 
 # ───────────────────────────────────────────────────────────
 # WordPressに投稿（重複チェック付き）
@@ -120,13 +120,7 @@ def post_to_wp(item: dict):
             print(f"Warning: thumbnail upload failed for {item['title']}: {e}")
 
     # 詳細ページから説明文を取得して要約
-    session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
-    description = ""
-    try:
-        description = fetch_description(item["detail_url"], session)
-    except Exception as e:
-        print(f"Warning: description fetch failed for {item['title']}: {e}")
+    description = item.get("description", "") or ""
     if not description:
         description = "(説明文なし)"
     summary = textwrap.shorten(description, width=200, placeholder="…")
