@@ -28,8 +28,9 @@ if not WP_URL or not WP_USER or not WP_PASS:
 # ───────────────────────────────────────────────────────────
 # HTML スクレイピングで最新アマチュア動画を取得
 # ───────────────────────────────────────────────────────────
+
 def fetch_latest_videos(max_items: int):
-    LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120" "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
+    LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
     headers = {"User-Agent": USER_AGENT}
     resp = requests.get(LIST_URL, headers=headers)
     resp.raise_for_status()
@@ -73,6 +74,7 @@ def fetch_latest_videos(max_items: int):
 # ───────────────────────────────────────────────────────────
 # WordPress に投稿（重複チェック付き）
 # ───────────────────────────────────────────────────────────
+
 def post_to_wp(item: dict):
     wp = Client(WP_URL, WP_USER, WP_PASS)
     existing = wp.call(GetPosts({"post_status": "publish", "s": item["title"]}))
@@ -115,6 +117,7 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 # メイン処理
 # ───────────────────────────────────────────────────────────
+
 def main():
     print(f"=== Job start: fetching top {MAX_ITEMS} videos via HTML scrape ===")
     videos = fetch_latest_videos(MAX_ITEMS)
