@@ -122,7 +122,6 @@ def post_to_wp(item: dict):
     description = item.get("description", "") or "(説明文なし)"
     summary = textwrap.shorten(description, width=200, placeholder="…")
 
-    # コンテンツ生成
         # コンテンツ生成
     content = f"<p>{summary}</p>
 "
@@ -132,7 +131,7 @@ def post_to_wp(item: dict):
     content += f"<p><a href=\"{item['detail_url']}\" target=\"_blank\">▶ 詳細・購入はこちら</a></p>
 "
 
-    post = WordPressPost()
+    post = WordPressPost()()
     post.title = item["title"]
     post.content = content
     if thumb_id:
