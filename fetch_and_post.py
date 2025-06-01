@@ -47,10 +47,9 @@ def fetch_latest_videos(max_items: int):
     resp = requests.get(url, params=params, headers=headers)
     try:
         resp.raise_for_status()
-    except Exception as e:
-        print(f"API request failed: {resp.url}
-Response: {resp.text}")
-        raise()
+    except Exception:
+        print(f"API request failed: {resp.url}\nResponse: {resp.text}")
+        raise
     data = resp.json()
     items = data.get("result", {}).get("items", [])
     videos = []
