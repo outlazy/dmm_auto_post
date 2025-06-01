@@ -47,21 +47,25 @@ def fetch_latest_videos(max_items: int):
 
     videos = []
     seen = set()
-    # <a> タグから '/detail/' を含むリンクを抽出
-    for a in soup.find_all("a", href=True):
+    # <img> タグからサムネイルを持つアマチュア動画を抽出
+    for img in soup.find_all("img", src=True):
+        src = img["src"]
+        # アマチュア作品のサムネイルURLには '/amateur/' が含まれる
+        if "/amateur/" not in src:
+            continue
+        # 親の <a> タグを取得
+        a = img.find_parent("a", href=True)
+        if not a:
+            continue
         detail_url = a["href"]
+        # 詳細ページURLに '/detail/' が含まれていない場合はスキップ
         if "/detail/" not in detail_url:
             continue
+        # 重複チェック
         if detail_url in seen:
             continue
-        img = a.find("img")
-        if not img:
-            continue
-        thumb = img.get("data-original") or img.get("src", "")
-        # サムネイルがアマチュア動画用か判定
-        if "/amateur/" not in thumb:
-            continue
         title = img.get("alt", "").strip() or img.get("title", "").strip()
+        thumb = src
         description = _fetch_description(detail_url, session)
 
         videos.append({"title": title, "detail_url": detail_url, "thumb": thumb, "description": description})
