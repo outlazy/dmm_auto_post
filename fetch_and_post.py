@@ -24,7 +24,8 @@ WP_URL    = os.getenv("WP_URL")
 WP_USER   = os.getenv("WP_USER")
 WP_PASS   = os.getenv("WP_PASS")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
+# デジタルビデオ一覧に切替
+LIST_URL   = "https://video.dmm.co.jp/digital/videoc/list/?sort=date"
 MAX_ITEMS  = int(os.getenv("HITS", 5))
 
 if not WP_URL or not WP_USER or not WP_PASS:
@@ -33,6 +34,7 @@ if not WP_URL or not WP_USER or not WP_PASS:
 # ───────────────────────────────────────────────────────────
 # HTTP GET + age_check bypass
 # ───────────────────────────────────────────────────────────
+
 def fetch_page(url: str, session: requests.Session) -> requests.Response:
     headers = {"User-Agent": USER_AGENT}
     res = session.get(url, headers=headers)
@@ -54,6 +56,7 @@ def fetch_page(url: str, session: requests.Session) -> requests.Response:
 # ───────────────────────────────────────────────────────────
 # 詳細ページから説明文取得
 # ───────────────────────────────────────────────────────────
+
 def fetch_description(detail_url: str, session: requests.Session) -> str:
     res = fetch_page(detail_url, session)
     soup = BeautifulSoup(res.text, "lxml")
@@ -63,6 +66,7 @@ def fetch_description(detail_url: str, session: requests.Session) -> str:
 # ───────────────────────────────────────────────────────────
 # 一覧ページから動画情報を抽出
 # ───────────────────────────────────────────────────────────
+
 def fetch_videos_from_list(max_items: int):
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
@@ -71,8 +75,11 @@ def fetch_videos_from_list(max_items: int):
 
     videos = []
     seen = set()
-    for a in soup.find_all("a", href=re.compile(r"/amateur/-/detail/")):
-        href = a.get("href")
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        # デジタルビデオ詳細URLを探す
+        if "/digital/videoc/-/detail/" not in href:
+            continue
         detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
         if detail_url in seen:
             continue
@@ -96,6 +103,7 @@ def fetch_videos_from_list(max_items: int):
 # ───────────────────────────────────────────────────────────
 # WordPressに投稿（重複チェック付き）
 # ───────────────────────────────────────────────────────────
+
 def post_to_wp(item: dict):
     wp = Client(WP_URL, WP_USER, WP_PASS)
     existing = wp.call(GetPosts({"post_status": "publish", "s": item["title"]}))
@@ -147,8 +155,9 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 # メイン
 # ───────────────────────────────────────────────────────────
+
 def main():
-    print(f"=== Job start: fetching top {MAX_ITEMS} videos from amateur list ===")
+    print(f"=== Job start: fetching top {MAX_ITEMS} videos from digital videoc list ===")
     videos = fetch_videos_from_list(MAX_ITEMS)
     print(f"Fetched {len(videos)} videos.")
     for vid in videos:
