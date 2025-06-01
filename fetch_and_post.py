@@ -33,6 +33,7 @@ if not API_ID or not AFF_ID:
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos(max_items: int):
     url = "https://api.dmm.com/affiliate/v3/ItemList"
+    # 正しいsiteパラメータは DMM.R18
     params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
@@ -48,7 +49,8 @@ def fetch_latest_videos(max_items: int):
     try:
         resp.raise_for_status()
     except Exception:
-        print(f"API request failed: {resp.url}\nResponse: {resp.text}")
+        print("API request failed:", resp.url)
+        print("Response:", resp.text)
         raise
     data = resp.json()
     items = data.get("result", {}).get("items", [])
@@ -56,10 +58,8 @@ def fetch_latest_videos(max_items: int):
     for item in items:
         title = item.get("title", "").strip()
         detail_url = item.get("URL", "")
-        # サムネイル画像
         img_urls = item.get("imageURL", {})
         thumb = img_urls.get("small") or img_urls.get("large") or ""
-        # 説明文は API では取得できないため空文字
         description = ""
         videos.append({
             "title": title,
