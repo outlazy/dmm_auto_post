@@ -33,7 +33,7 @@ if not API_ID or not AFF_ID:
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos(max_items: int):
     url = "https://api.dmm.com/affiliate/v3/ItemList"
-    # DMM.R18 サイト, digitalAmateur サービスでアマチュア作品を取得
+    # アマチュア作品用の正しいパラメータ：site=DMM.R18, service=digitalAmateur
     params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
@@ -97,7 +97,8 @@ def post_to_wp(item: dict):
         description = "(説明文なし)"
     summary = textwrap.shorten(description, width=200, placeholder="…")
 
-    content = f"<p>{summary}</p>\n"
+    content = f"<p>{summary}</p>
+"
     content += f"<p><a href=\"{item['detail_url']}\" target=\"_blank\">▶ 詳細・購入はこちら</a></p>"
 
     post = WordPressPost()
