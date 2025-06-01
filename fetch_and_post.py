@@ -37,7 +37,7 @@ def fetch_latest_videos(max_items: int):
     genre_params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
-        "site": "FANZA",
+        "site": "DMM.R18",
         "service": "digital",
         "floor": "videoa",  # 一般作品（AV）
         "output": "json"
