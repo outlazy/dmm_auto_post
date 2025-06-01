@@ -26,7 +26,7 @@ if not WP_URL or not WP_USER or not WP_PASS:
     raise RuntimeError("環境変数 WP_URL / WP_USER / WP_PASS が設定されていません")
 
 # ───────────────────────────────────────────────────────────
-# HTML スクレイピングで最新アマチュア動画を取得
+# DMM API で最新アマチュア動画を取得
 # ───────────────────────────────────────────────────────────
 
 def fetch_latest_videos(max_items: int):
@@ -40,16 +40,16 @@ def fetch_latest_videos(max_items: int):
     # API エンドポイントとパラメータを設定
     API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
-        "api_id": DMM_API_ID,
-        "affiliate_id": DMM_AFFILIATE_ID,
-        "site": "FANZA",
-        "service": "digital",
-        # floor="videoa" and mono_genre_id=8503 でアマチュア動画を取得
-        "floor": "videoa",
+        "api_id":        DMM_API_ID,
+        "affiliate_id":  DMM_AFFILIATE_ID,
+        "site":          "FANZA",
+        # service="digitalAmateur" でアマチュア動画を取得
+        "service":       "digitalAmateur",
+        # アマチュアのジャンルコード（8503）のみ指定
         "mono_genre_id": "8503",
-        "sort": "date",
-        "hits": max_items,
-        "output": "json"
+        "sort":          "date",
+        "hits":          max_items,
+        "output":        "json"
     }
 
     response = requests.get(API_URL, params=params)
@@ -67,48 +67,15 @@ def fetch_latest_videos(max_items: int):
         description = i.get("description", "").strip()
 
         videos.append({
-            "title": title,
-            "detail_url": detail_url,
-            "thumb": thumb,
+            "title":       title,
+            "detail_url":  detail_url,
+            "thumb":       thumb,
             "description": description
         })
     return videos
 
-    # ② li.item 内の <img> を探す
-    for li in soup.select("li.item"):
-        a = li.find("a", href=True)
-        img = li.find("img")
-        if not a or not img:
-            continue
-        detail_url = a["href"]
-        if detail_url in seen:
-            continue
-        title = img.get("alt", "").strip() or img.get("title", "").strip()
-        thumb = img.get("src", "")
-        description = _fetch_description(detail_url, headers)
-        videos.append({"title": title, "detail_url": detail_url, "thumb": thumb, "description": description})
-        seen.add(detail_url)
-        if len(videos) >= max_items:
-            return videos
-
-    # ③ p.tmb > a 内の <img> を探す
-    for a in soup.select("p.tmb > a[href*='/detail/']"):  
-        img = a.find("img")
-        detail_url = a.get("href")
-        if not img or not detail_url or detail_url in seen:
-            continue
-        title = img.get("alt", "").strip() or img.get("title", "").strip()
-        thumb = img.get("src", "")
-        description = _fetch_description(detail_url, headers)
-        videos.append({"title": title, "detail_url": detail_url, "thumb": thumb, "description": description})
-        seen.add(detail_url)
-        if len(videos) >= max_items:
-            return videos
-
-    return videos
-
-# 説明文取得共通ルーチン
-
+# 説明文取得は API から直接取得済みなので不要だが、HTML からも取れるよう残す
+# （必要に応じて呼び出しはしない）
 def _fetch_description(url: str, headers: dict) -> str:
     try:
         d_resp = requests.get(url, headers=headers)
@@ -169,7 +136,7 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 
 def main():
-    print(f"=== Job start: fetching top {MAX_ITEMS} videos via HTML scrape ===")
+    print(f"=== Job start: fetching top {MAX_ITEMS} videos via API ===")
     videos = fetch_latest_videos(MAX_ITEMS)
     print(f"Fetched {len(videos)} videos.")
     for vid in videos:
