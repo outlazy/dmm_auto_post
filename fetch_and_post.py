@@ -38,7 +38,6 @@ def fetch_latest_videos(max_items: int):
 
     videos = []
     # 各動画リストアイテムを取得 (liタグにクラス名"list__item"など)
-        videos = []
     # DMMのアマチュア一覧ページでは、サムネイル画像を<a>で囲む<p class="tmb">要素がある
     thumbs = soup.select("p.tmb > a")
     for a in thumbs[:max_items]:
