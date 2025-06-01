@@ -24,7 +24,7 @@ WP_URL    = os.getenv("WP_URL")
 WP_USER   = os.getenv("WP_USER")
 WP_PASS   = os.getenv("WP_PASS")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-LIST_URL   = "https://www.dmm.co.jp/amateur/list/?sort=date"
+LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
 MAX_ITEMS  = int(os.getenv("HITS", 5))
 
 if not WP_URL or not WP_USER or not WP_PASS:
