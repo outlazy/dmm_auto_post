@@ -2,14 +2,10 @@
 # fetch_and_post.py
 
 import os
-import time
-import requests
-import textwrap
-from dotenv import load_dotenv
-from wordpress_xmlrpc import Client, WordPressPost
-from wordpress_xmlrpc.methods import media, posts
-from wordpress_xmlrpc.methods.posts import GetPosts
-from wordpress_xmlrpc.compat import xmlrpc_client
+import collections
+import collections.abc
+# Python3.10+ では collections.Iterable が collections.abc.Iterable に移動したため、互換性を確保
+collections.Iterable = collections.abc.Iterable
 from bs4 import BeautifulSoup
 
 # ───────────────────────────────────────────────────────────
@@ -30,48 +26,48 @@ if not WP_URL or not WP_USER or not WP_PASS:
 # ───────────────────────────────────────────────────────────
 
 def fetch_latest_videos(max_items: int):
-    """DMM API を使って最新のアマチュア動画を取得"""
-    # 環境変数から API キーとアフィリエイト ID を取得
-    DMM_API_ID = os.getenv("DMM_API_ID")
-    DMM_AFFILIATE_ID = os.getenv("DMM_AFFILIATE_ID")
-    if not DMM_API_ID or not DMM_AFFILIATE_ID:
-        raise RuntimeError("環境変数 DMM_API_ID / DMM_AFFILIATE_ID が設定されていません")
+    """HTMLスクレイピングで最新のアマチュア動画を取得"""
+    # 年齢認証のためセッションを用意
+    session = requests.Session()
+    session.headers.update({"User-Agent": USER_AGENT})
+    try:
+        # 年齢認証フォーム送信
+        session.post(
+            "https://www.dmm.co.jp/my/-/service/=/security_age/", data={"adult": "ok"}
+        )
+    except:
+        pass
 
-    # API エンドポイントとパラメータを設定
-    API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
-    params = {
-        "api_id":        DMM_API_ID,
-        "affiliate_id":  DMM_AFFILIATE_ID,
-        "site":          "FANZA",
-        # service="digitalAmateur" でアマチュア動画を取得
-        "service":       "digital",
-        # アマチュアのジャンルコード（8503）のみ指定
-        "mono_genre_id": "8503",
-        "sort":          "date",
-        "hits":          max_items,
-        "output":        "json"
-    }
-
-    response = requests.get(API_URL, params=params)
-    response.raise_for_status()
-    data = response.json()
-    items = data.get("result", {}).get("items", [])
+    LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
+    resp = session.get(LIST_URL)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
-    for i in items:
-        title = i.get("title", "").strip()
-        detail_url = i.get("URL", "")
-        # サムネイル取得 (large があれば large、なければ small)
-        img_info = i.get("imageURL", {})
-        thumb = img_info.get("large") or img_info.get("small", "")
-        description = i.get("description", "").strip()
+    seen = set()
+    # <li class="d-item__item"> 要素を取得
+    for li in soup.select("li.d-item__item"):
+        a = li.find("a", href=True)
+        if not a:
+            continue
+        detail_path = a["href"]
+        # detail URL のフルパスを生成
+        detail_url = detail_path if detail_path.startswith("http") else f"https://www.dmm.co.jp{detail_path}"
+        if detail_url in seen:
+            continue
+        img = li.find("img")
+        if not img:
+            continue
+        # サムネイルは data-original または src
+        thumb = img.get("data-original") or img.get("src", "")
+        title = img.get("alt", "").strip() or img.get("title", "").strip()
+        # 説明取得
+        description = _fetch_description(detail_url, {"User-Agent": USER_AGENT})
 
-        videos.append({
-            "title":       title,
-            "detail_url":  detail_url,
-            "thumb":       thumb,
-            "description": description
-        })
+        videos.append({"title": title, "detail_url": detail_url, "thumb": thumb, "description": description})
+        seen.add(detail_url)
+        if len(videos) >= max_items:
+            break
     return videos
 
 # 説明文取得は API から直接取得済みなので不要だが、HTML からも取れるよう残す
@@ -139,14 +135,17 @@ def main():
     print(f"=== Job start: fetching top {MAX_ITEMS} videos via API ===")
     videos = fetch_latest_videos(MAX_ITEMS)
     print(f"Fetched {len(videos)} videos.")
-    for vid in videos:
+    if not videos:
+        print("No videos to post.")
+    else:
+        vid = videos[0]
         try:
             print(f"--> Posting: {vid['title']}")
             post_to_wp(vid)
-            time.sleep(1)
         except Exception as e:
             print(f"✖ Error posting '{vid['title']}': {e}")
     print("=== Job finished ===")
 
 if __name__ == "__main__":
+    main() == "__main__":
     main()
