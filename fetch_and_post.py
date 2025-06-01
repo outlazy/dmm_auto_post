@@ -68,22 +68,34 @@ def fetch_description(detail_url: str, session: requests.Session) -> str:
 # ───────────────────────────────────────────────────────────
 
 def fetch_latest_video():
-    session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
-    resp = fetch_page(LIST_URL, session)
-    soup = BeautifulSoup(resp.text, "lxml")
-
-    # 最初に見つかった詳細リンクのみ処理
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/amateur/-/detail/" not in href:
-            continue
-        detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
-        img = a.find("img") or a.parent.find("img")
-        thumb = img.get("src", "") if img else ""
-        title = img.get("alt", "").strip() if img and img.get("alt") else a.get_text(strip=True)
-        return {"title": title, "detail_url": detail_url, "thumb": thumb}
-    return None
+    # APIを使って最新1件を取得
+    api_url = "https://api.dmm.com/affiliate/v3/ItemList"
+    params = {
+        "api_id":       os.getenv("DMM_API_ID"),
+        "affiliate_id": os.getenv("DMM_AFFILIATE_ID"),
+        "site":         "FANZA",
+        "service":      "digital",
+        "floor":        "amateur",
+        "hits":         1,
+        "sort":         "date",
+        "output":       "json"
+    }
+    resp = requests.get(api_url, params=params)
+    resp.raise_for_status()
+    items = resp.json().get("result", {}).get("items", [])
+    if not items:
+        return None
+    i = items[0]
+    title = i.get("title", "").strip()
+    # 詳細URL
+    url_info = i.get("URL") or {}
+    detail_url = url_info.get("list") or url_info.get("pc") or ""
+    # サムネイル
+    img_info = i.get("imageURL", {}) or {}
+    thumb = img_info.get("large") or img_info.get("small") or ""
+    # 説明文
+    description = i.get("description", "").strip() or ""
+    return {"title": title, "detail_url": detail_url, "thumb": thumb, "description": description}
 
 # ───────────────────────────────────────────────────────────
 # WordPressに投稿（重複チェック付き）
