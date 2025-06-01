@@ -73,7 +73,7 @@ def fetch_latest_video():
     session.headers.update({"User-Agent": USER_AGENT})
     resp = fetch_page(LIST_URL, session)
     soup = BeautifulSoup(resp.text, "lxml")
-    # 詳細リンクを含む最初の <a> タグを取得
+    # 詳細リンクを含む <a> タグを取得
     for a in soup.find_all("a", href=True):
         href = a["href"]
         if "/amateur/-/detail/" not in href:
@@ -92,7 +92,7 @@ def fetch_latest_video():
         except:
             description = ""
         return {"title": title, "detail_url": detail_url, "thumb": thumb, "description": description}
-    return None"title": title, "detail_url": detail_url, "thumb": thumb, "description": description}
+    return None
 
 # ───────────────────────────────────────────────────────────
 # WordPressに投稿（重複チェック付き）
