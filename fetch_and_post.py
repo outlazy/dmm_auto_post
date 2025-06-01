@@ -44,7 +44,7 @@ def fetch_latest_videos(max_items: int):
         "affiliate_id":  DMM_AFFILIATE_ID,
         "site":          "FANZA",
         # service="digitalAmateur" でアマチュア動画を取得
-        "service":       "digitalAmateur",
+        "service":       "digital",
         # アマチュアのジャンルコード（8503）のみ指定
         "mono_genre_id": "8503",
         "sort":          "date",
