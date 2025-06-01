@@ -73,25 +73,26 @@ def fetch_latest_video():
     session.headers.update({"User-Agent": USER_AGENT})
     resp = fetch_page(LIST_URL, session)
     soup = BeautifulSoup(resp.text, "lxml")
-    # li.list-box の最初の要素を取得
-    first_li = soup.select_one("li.list-box")
-    if not first_li:
-        return None
-    a = first_li.find("a", href=True)
-    if not a or "/amateur/-/detail/" not in a["href"]:
-        return None
-    href = a["href"]
-    detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
-    img = first_li.find("img")
-    thumb = img.get("src", "") if img else ""
-    title = img.get("alt", "").strip() if img and img.get("alt") else a.get_text(strip=True)
-    # 説明文をスクレイピング
-    description = ""
-    try:
-        description = fetch_description(detail_url, session)
-    except:
+    # 詳細リンクを含む最初の <a> タグを取得
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/amateur/-/detail/" not in href:
+            continue
+        detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
+        img = a.find("img")
+        # imgがない場合はリンク先にサムネがないと判断し次へ
+        if not img:
+            continue
+        thumb = img.get("src", "")
+        title = img.get("alt", "").strip() if img.get("alt") else a.get_text(strip=True)
+        # 説明文をスクレイピング
         description = ""
-    return {"title": title, "detail_url": detail_url, "thumb": thumb, "description": description}
+        try:
+            description = fetch_description(detail_url, session)
+        except:
+            description = ""
+        return {"title": title, "detail_url": detail_url, "thumb": thumb, "description": description}
+    return None"title": title, "detail_url": detail_url, "thumb": thumb, "description": description}
 
 # ───────────────────────────────────────────────────────────
 # WordPressに投稿（重複チェック付き）
