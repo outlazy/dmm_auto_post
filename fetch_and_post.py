@@ -69,11 +69,48 @@ def fetch_latest_videos(max_items: int):
 
     videos = []
     seen = set()
-    for a in soup.find_all("a", href=True):
+        # ◆ リンク抽出を強化: 絶対URLと相対URLの両方をチェック
+        for a in soup.find_all("a", href=True):
         href = a["href"]
-        if "/amateur/-/detail/" not in href:
+        # 動画詳細リンクのパターン: アマチュアもしくはデジタル
+        if not any(pat in href for pat in ["/amateur/-/detail/", "/videoc/-/detail/"]):
             continue
-        detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
+        # detail_url を構築（絶対URLの場合はそのまま、相対URLの場合はドメインを付与）
+        if href.startswith("http"):
+            detail_url = href
+        else:
+            detail_url = f"https://video.dmm.co.jp{href}"
+        if detail_url in seen:
+            continue
+        img = a.find("img")
+        if not img:
+            continue
+        thumb = img.get("src", "")
+        title = img.get("alt", "").strip() if img.get("alt") else a.get_text(strip=True)
+        description = ""
+        try:
+            description = fetch_description(detail_url, session)
+        except:
+            description = ""
+        videos.append({
+            "title": title,
+            "detail_url": detail_url,
+            "thumb": thumb,
+            "description": description
+        })
+        seen.add(detail_url)
+        if len(videos) >= max_items:
+            break
+    return videos("a", href=True):
+        href = a["href"]
+        # 相対パスと絶対パスの両方を検出
+        if "/amateur/-/detail/" not in href and "https://video.dmm.co.jp/amateur/-/detail/" not in href:
+            continue
+        # detail_url を構築（絶対URLの場合はそのまま、相対URLの場合はドメインを付与）
+        if href.startswith("http"):
+            detail_url = href
+        else:
+            detail_url = f"https://video.dmm.co.jp{href}"
         if detail_url in seen:
             continue
         img = a.find("img")
