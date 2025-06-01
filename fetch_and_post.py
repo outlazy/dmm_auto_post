@@ -39,7 +39,7 @@ def fetch_latest_videos(max_items: int):
 
     # API エンドポイントとパラメータを設定
     API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
-        params = {
+    params = {
         "api_id": DMM_API_ID,
         "affiliate_id": DMM_AFFILIATE_ID,
         "site": "FANZA",
