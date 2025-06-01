@@ -24,9 +24,9 @@ WP_URL    = os.getenv("WP_URL")
 WP_USER   = os.getenv("WP_USER")
 WP_PASS   = os.getenv("WP_PASS")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-# アマチュアビデオ一覧に切替
+# アマチュアビデオ一覧（最新1件）のみ取得
 LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
-MAX_ITEMS  = int(os.getenv("HITS", 5))
+MAX_ITEMS  = 1  # 最新1件を取得
 
 if not WP_URL or not WP_USER or not WP_PASS:
     raise RuntimeError("環境変数 WP_URL / WP_USER / WP_PASS が設定されていません")
@@ -64,41 +64,26 @@ def fetch_description(detail_url: str, session: requests.Session) -> str:
     return desc_el.get_text(strip=True) if desc_el else ""
 
 # ───────────────────────────────────────────────────────────
-# 一覧ページから動画情報を抽出
+# 一覧ページから動画情報を抽出（最新1件）
 # ───────────────────────────────────────────────────────────
 
-def fetch_videos_from_list(max_items: int):
+def fetch_latest_video():
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT})
     resp = fetch_page(LIST_URL, session)
     soup = BeautifulSoup(resp.text, "lxml")
 
-    videos = []
-    seen = set()
+    # 最初に見つかった詳細リンクのみ処理
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        # アマチュアビデオ詳細URLを探す
         if "/amateur/-/detail/" not in href:
             continue
         detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
-        if detail_url in seen:
-            continue
-        seen.add(detail_url)
-        # サムネイルは <img> inside link or parent
         img = a.find("img") or a.parent.find("img")
         thumb = img.get("src", "") if img else ""
-        # タイトル
         title = img.get("alt", "").strip() if img and img.get("alt") else a.get_text(strip=True)
-        if not title:
-            continue
-        videos.append({
-            "title": title,
-            "detail_url": detail_url,
-            "thumb": thumb
-        })
-        if len(videos) >= max_items:
-            break
-    return videos
+        return {"title": title, "detail_url": detail_url, "thumb": thumb}
+    return None
 
 # ───────────────────────────────────────────────────────────
 # WordPressに投稿（重複チェック付き）
@@ -157,16 +142,13 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 
 def main():
-    print(f"=== Job start: fetching top {MAX_ITEMS} videos from amateur list ===")
-    videos = fetch_videos_from_list(MAX_ITEMS)
-    print(f"Fetched {len(videos)} videos.")
-    for vid in videos:
-        try:
-            print(f"--> Posting: {vid['title']}")
-            post_to_wp(vid)
-            time.sleep(1)
-        except Exception as e:
-            print(f"✖ Error posting '{vid['title']}': {e}")
+    print("=== Job start: fetching latest video from amateur list ===")
+    video = fetch_latest_video()
+    if not video:
+        print("No videos found.")
+        return
+    print(f"--> Found: {video['title']}")
+    post_to_wp(video)
     print("=== Job finished ===")
 
 if __name__ == "__main__":
