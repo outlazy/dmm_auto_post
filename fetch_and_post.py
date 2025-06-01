@@ -33,11 +33,10 @@ if not API_ID or not AFF_ID:
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos(max_items: int):
     url = "https://api.dmm.com/affiliate/v3/ItemList"
-    # 正しいsiteパラメータは DMM.R18
-    params = {
+        params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
-        "site": "FANZA",
+        "site": "DMM.R18",
         "service": "digital",
         "floor": "amateur",
         "sort": "date",
