@@ -36,7 +36,7 @@ def fetch_latest_videos(max_items: int):
     params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
-        "site": "FANZA",
+        "site": "DMM.R18",
         "service": "digital",
         "floor": "amateur",
         "sort": "date",
@@ -45,7 +45,12 @@ def fetch_latest_videos(max_items: int):
     }
     headers = {"User-Agent": USER_AGENT}
     resp = requests.get(url, params=params, headers=headers)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"API request failed: {resp.url}
+Response: {resp.text}")
+        raise()
     data = resp.json()
     items = data.get("result", {}).get("items", [])
     videos = []
