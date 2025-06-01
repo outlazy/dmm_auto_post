@@ -24,8 +24,8 @@ WP_URL    = os.getenv("WP_URL")
 WP_USER   = os.getenv("WP_USER")
 WP_PASS   = os.getenv("WP_PASS")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-# デジタルビデオ一覧に切替
-LIST_URL   = "https://video.dmm.co.jp/digital/videoc/list/?sort=date"
+# アマチュアビデオ一覧に切替
+LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
 MAX_ITEMS  = int(os.getenv("HITS", 5))
 
 if not WP_URL or not WP_USER or not WP_PASS:
@@ -77,8 +77,8 @@ def fetch_videos_from_list(max_items: int):
     seen = set()
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        # デジタルビデオ詳細URLを探す
-        if "/digital/videoc/-/detail/" not in href:
+        # アマチュアビデオ詳細URLを探す
+        if "/amateur/-/detail/" not in href:
             continue
         detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
         if detail_url in seen:
@@ -157,7 +157,7 @@ def post_to_wp(item: dict):
 # ───────────────────────────────────────────────────────────
 
 def main():
-    print(f"=== Job start: fetching top {MAX_ITEMS} videos from digital videoc list ===")
+    print(f"=== Job start: fetching top {MAX_ITEMS} videos from amateur list ===")
     videos = fetch_videos_from_list(MAX_ITEMS)
     print(f"Fetched {len(videos)} videos.")
     for vid in videos:
