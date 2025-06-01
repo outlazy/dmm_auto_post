@@ -34,11 +34,15 @@ if not API_ID or not AFF_ID:
 def fetch_latest_videos(max_items: int):
     # ① genreSearch で「アマチュア」ジャンルIDを取得
     genre_url = "https://api.dmm.com/affiliate/v3/GenreSearch"
-        genre_params = {
+        genre_    params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
-        "site": "DMM.R18",
+        "site": "FANZA",
         "service": "digital",
+        "floor": "amateur",  # アマチュア作品
+        "mono_genre_id": amateur_genre_id,
+        "sort": "date",
+        "hits": max_items,
         "output": "json"
     }
     genre_resp = requests.get(genre_url, params=genre_params, headers={"User-Agent": USER_AGENT})
