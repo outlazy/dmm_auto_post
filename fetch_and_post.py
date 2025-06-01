@@ -39,7 +39,6 @@ def fetch_latest_videos(max_items: int):
         "affiliate_id": AFF_ID,
         "site": "FANZA",
         "service": "digital",
-        "floor": "videoa",       # AV作品フロア
         "output": "json"
     }
     genre_resp = requests.get(genre_url, params=genre_params, headers={"User-Agent": USER_AGENT})
