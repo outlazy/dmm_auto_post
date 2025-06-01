@@ -34,7 +34,7 @@ if not API_ID or not AFF_ID:
 def fetch_latest_videos(max_items: int):
     # ① GenreSearch で「アマチュア」ジャンルIDを取得
     genre_url = "https://api.dmm.com/affiliate/v3/GenreSearch"
-        genre_params = {
+    genre_params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
         "site": "DMM.R18",
