@@ -38,21 +38,19 @@ def fetch_latest_videos(max_items: int):
 
     videos = []
     seen = set()
-    # <a> タグから 'detail' を含み、子に '<img>' があり img の src に '/amateur/' を含むリンクを抽出
-    for a in soup.find_all("a", href=True):
+    # DMMアマチュア一覧ページでは <ul class="d-item__list"> の中に <li class="d-item__item"> 要素がある
+    for li in soup.select("ul.d-item__list li.d-item__item"):
+        a = li.find("a", href=True)
+        if not a:
+            continue
         detail_url = a["href"]
-        if "/detail/" not in detail_url:
+        if "/detail/" not in detail_url or detail_url in seen:
             continue
         img = a.find("img")
         if not img:
             continue
-        src = img.get("data-original") or img.get("src", "")
-        if "/amateur/" not in src:
-            continue
-        if detail_url in seen:
-            continue
+        thumb = img.get("data-original") or img.get("src", "")
         title = img.get("alt", "").strip() or img.get("title", "").strip()
-        thumb = src
         description = _fetch_description(detail_url, headers)
 
         videos.append({"title": title, "detail_url": detail_url, "thumb": thumb, "description": description})
