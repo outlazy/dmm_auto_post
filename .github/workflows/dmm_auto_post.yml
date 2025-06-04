@@ -1,20 +1,18 @@
-# .github/workflows/dmm_auto_post.yml
-name: DMM → WordPress Auto Post
+name: DMM Auto Post
 
 on:
   schedule:
-    - cron: '0 15,19,23,3,7,11 * * *'  # UTC schedule for every 4 hours JST
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 jobs:
-  post:
+  auto-post:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v2
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
@@ -22,14 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests python-dotenv python-wordpress-xmlrpc beautifulsoup4 lxml
+          pip install requests beautifulsoup4 python-wordpress-xmlrpc python-dotenv schedule
 
-      - name: Run posting script
-        env:
-          DMM_API_ID:        ${{ secrets.DMM_API_ID }}
-          DMM_AFFILIATE_ID:  ${{ secrets.DMM_AFFILIATE_ID }}
-          WP_URL:            ${{ secrets.WP_URL }}
-          WP_USER:           ${{ secrets.WP_USER }}
-          WP_PASS:           ${{ secrets.WP_PASS }}
-          HITS:              5
-        run: python fetch_and_post.py
+      - name: Run DMM Auto Post
+        run: python dmm_auto_post.py
