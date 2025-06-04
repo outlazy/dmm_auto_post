@@ -14,7 +14,7 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 # ───────────────────────────────────────────────────────────
 # 環境変数読み込み (.env があればその内容も読み込む)
 # ───────────────────────────────────────────────────────────
-load_dotenv()  # ローカル動作時に .env を読ませる
+load_dotenv()
 
 WP_URL             = os.getenv("WP_URL")
 WP_USER            = os.getenv("WP_USER")
@@ -22,7 +22,7 @@ WP_PASS            = os.getenv("WP_PASS")
 DMM_API_ID         = os.getenv("DMM_API_ID")
 DMM_AFFILIATE_ID   = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-MAX_ITEMS          = 10
+MAX_ITEMS          = 10  # 重複チェック用に最大10件まで取得
 
 # 必須環境変数をチェック
 missing = []
@@ -194,15 +194,7 @@ def job():
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
 
 # ───────────────────────────────────────────────────────────
-# スケジューリング：4時間ごとに job() を実行
+# エントリポイント：一度だけ job() を呼び出して終了
 # ───────────────────────────────────────────────────────────
-def main():
-    job()
-    schedule.every(4).hours.do(job)
-    print("Scheduler running: every 4 hours")
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
-
 if __name__ == "__main__":
-    main()
+    job()
