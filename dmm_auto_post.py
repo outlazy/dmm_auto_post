@@ -33,18 +33,18 @@ if missing:
 
 # ───────────────────────────────────────────────────────────
 # DMM Affiliate API から最新アマチュア動画リストを取得
-#   site=FANZA, service=videoa, floor=videoa_et, genre_id=8503
+#   site=DMM.R18, service=digital, floor=videoa, genre_id=8503
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos_from_api(max_items: int):
     endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
         "api_id":         DMM_API_ID,
         "affiliate_id":   DMM_AFFILIATE_ID,
-        "site":           "FANZA",         # FANZAサイト
-        "service":        "videoa",        # 動画サービス
-        "floor":          "videoa_et",     # アマチュア動画フロア
-        "genre_id":       "8503",          # アマチュアジャンル
-        "sort":           "-release_date", # 新着順（降順）
+        "site":           "DMM.R18",         # DMM成人向けサイト
+        "service":        "digital",         # デジタル商品取得
+        "floor":          "videoa",          # アダルト動画フロア
+        "genre_id":       "8503",            # アマチュアジャンル
+        "sort":           "-release_date",   # 新着順（降順）
         "hits":           max_items,
         "output":         "json"
     }
