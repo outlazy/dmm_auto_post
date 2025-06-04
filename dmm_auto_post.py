@@ -5,7 +5,6 @@ import os
 import time
 import requests
 import schedule
-from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
@@ -16,132 +15,84 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 # 環境変数読み込み
 # ───────────────────────────────────────────────────────────
 load_dotenv()
-WP_URL       = os.getenv("WP_URL")
-WP_USER      = os.getenv("WP_USER")
-WP_PASS      = os.getenv("WP_PASS")
-AFFILIATE_ID = os.getenv("AFFILIATE_ID", "").strip()
-USER_AGENT   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-# 取得する件数：最新10件までチェック
-MAX_ITEMS    = 10
+WP_URL        = os.getenv("WP_URL")
+WP_USER       = os.getenv("WP_USER")
+WP_PASS       = os.getenv("WP_PASS")
+DMM_API_ID    = os.getenv("DMM_API_ID", "").strip()
+AFFILIATE_ID  = os.getenv("AFFILIATE_ID", "").strip()
+USER_AGENT    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+# APIで取得する件数（重複チェックのために複数件取得）
+MAX_ITEMS     = 10
 
 if not WP_URL or not WP_USER or not WP_PASS:
     raise RuntimeError("環境変数 WP_URL / WP_USER / WP_PASS が設定されていません")
-if not AFFILIATE_ID:
-    raise RuntimeError("環境変数 AFFILIATE_ID が設定されていません")
+if not DMM_API_ID or not AFFILIATE_ID:
+    raise RuntimeError("環境変数 DMM_API_ID / AFFILIATE_ID が設定されていません")
 
 # ───────────────────────────────────────────────────────────
-# DMM 年齢認証を突破してセッションを返す
+# DMM Affiliate API を使って最新のアマチュア動画リストを取得
 # ───────────────────────────────────────────────────────────
-def _get_dmm_session() -> requests.Session:
-    session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
-    try:
-        session.post(
-            "https://www.dmm.co.jp/my/-/service/=/security_age/",
-            data={"adult": "ok"}
-        )
-    except Exception:
-        pass
-    return session
-
-# ───────────────────────────────────────────────────────────
-# DMM アマチュア動画一覧ページから最新 N 件の detail_url, title を取得
-# ───────────────────────────────────────────────────────────
-def fetch_latest_videos(max_items: int):
-    session = _get_dmm_session()
-    LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503&limit=120"
-    resp = session.get(LIST_URL)
+def fetch_latest_videos_from_api(max_items: int):
+    """
+    DMM Affiliate API でジャンル8503の最新動画を取得
+    → 各アイテムの title, affiliateURL, content（説明文）, sampleImageURL（サムネ画像リスト）, label, genre を返す
+    """
+    endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
+    params = {
+        "api_id": DMM_API_ID,
+        "affiliate_id": AFFILIATE_ID,
+        "site": "DMM.R18",
+        "service": "videoa",
+        "floor": "videoa_et",        # アマチュア系のフロア
+        "genre_id": "8503",
+        "sort": "-release_date",     # 新着順（降順）
+        "hits": max_items,
+        "output": "json"
+    }
+    headers = {"User-Agent": USER_AGENT}
+    resp = requests.get(endpoint, params=params, headers=headers)
     resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    data = resp.json()
 
+    items = data.get("result", {}).get("items", [])
     videos = []
-    seen = set()
+    for it in items:
+        title       = it.get("title", "").strip()
+        detail_url  = it.get("affiliateURL", "").strip()
+        description = it.get("content", "").strip() or "(説明文なし)"
 
-    for li in soup.select("li.d-item__item"):
-        a_tag = li.find("a", href=True)
-        if not a_tag:
-            continue
+        # サムネ画像URLリストを取得
+        sample_images = []
+        sample_dict = it.get("sampleImageURL", {})
+        if isinstance(sample_dict, dict):
+            for url in sample_dict.values():
+                if url and url not in sample_images:
+                    sample_images.append(url)
 
-        detail_path = a_tag["href"]
-        detail_url = detail_path if detail_path.startswith("http") else f"https://www.dmm.co.jp{detail_path}"
-        if detail_url in seen:
-            continue
+        # レーベル名取得
+        label = ""
+        if "label" in it and isinstance(it["label"], dict):
+            label = it["label"].get("name", "").strip()
 
-        img = li.find("img")
-        if not img:
-            continue
-        title = img.get("alt", "").strip() or img.get("title", "").strip()
-        if not title:
-            continue
+        # ジャンル名取得（iteminfo の genre リストから最初の要素）
+        genre = ""
+        iteminfo = it.get("iteminfo", {})
+        genres = iteminfo.get("genre", []) if isinstance(iteminfo, dict) else []
+        if isinstance(genres, list) and genres:
+            first_genre = genres[0]
+            if isinstance(first_genre, dict):
+                genre = first_genre.get("name", "").strip()
 
         videos.append({
             "title": title,
-            "detail_url": detail_url
+            "detail_url": detail_url,
+            "description": description,
+            "sample_images": sample_images,
+            "label": label,
+            "genre": genre
         })
-        seen.add(detail_url)
-
-        if len(videos) >= max_items:
-            break
 
     return videos
-
-# ───────────────────────────────────────────────────────────
-# detail ページから説明文、サンプル画像、レーベル、ジャンルを取得
-# ───────────────────────────────────────────────────────────
-def fetch_detail_info(detail_url: str):
-    session = _get_dmm_session()
-    resp = session.get(detail_url, headers={"User-Agent": USER_AGENT})
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    # 説明文取得
-    desc_div = soup.find("div", class_="mg-b20 lh4")
-    description = ""
-    if desc_div:
-        description = desc_div.get_text(separator=" ", strip=True)
-    if not description:
-        alt_desc = soup.find("p", class_="compTxt")
-        if alt_desc:
-            description = alt_desc.get_text(separator=" ", strip=True)
-    if not description:
-        description = "(説明文なし)"
-
-    # サンプル画像取得
-    sample_images = []
-    for img in soup.select("div#sample-image-box img"):
-        src = img.get("data-original") or img.get("src")
-        if src and src not in sample_images:
-            sample_images.append(src)
-    if not sample_images:
-        for img in soup.select("img.sample-box__img"):
-            src = img.get("data-original") or img.get("src")
-            if src and src not in sample_images:
-                sample_images.append(src)
-    if not sample_images:
-        for img in soup.find_all("img"):
-            src = img.get("data-original") or img.get("src") or ""
-            if "sample" in src and src not in sample_images:
-                sample_images.append(src)
-
-    # メタ情報取得：レーベルとジャンル
-    label = None
-    genre = None
-    for dt in soup.find_all("dt"):
-        key = dt.get_text(strip=True)
-        if "レーベル" in key:
-            dd = dt.find_next_sibling("dd")
-            if dd:
-                a = dd.find("a")
-                label = a.get_text(strip=True) if a else dd.get_text(strip=True)
-        if "ジャンル" in key:
-            dd = dt.find_next_sibling("dd")
-            if dd:
-                first_genre = dd.find("a")
-                genre = first_genre.get_text(strip=True) if first_genre else dd.get_text(strip=True)
-        if label and genre:
-            break
-
-    return description, sample_images, label, genre
 
 # ───────────────────────────────────────────────────────────
 # WordPress に投稿（重複チェック付き、タグにレーベル・ジャンル追加）
@@ -150,11 +101,11 @@ def post_to_wp(item: dict) -> bool:
     """
     item の中身：
       - title: 投稿タイトル
-      - detail_url: DMM の詳細ページ URL
+      - detail_url: DMM のアフィリエイトリンク
       - description: 説明文テキスト
       - sample_images: 画像 URL リスト（1枚目含む）
-      - label: レーベル名（ある場合）
-      - genre: ジャンル名（ある場合）
+      - label: レーベル名
+      - genre: ジャンル名
     戻り値：
       - True: 投稿成功
       - False: 重複などで投稿しなかった
@@ -184,11 +135,9 @@ def post_to_wp(item: dict) -> bool:
         except Exception as e:
             print(f"Warning: アイキャッチアップロード失敗 ({first_img_url}): {e}")
 
-    # アフィリエイトリンクを組み立て
-    aff_link = f"{item['detail_url']}?affiliate_id={AFFILIATE_ID}"
-
     # 投稿本文を組み立て
-    title = item["title"]
+    title       = item["title"]
+    aff_link    = item["detail_url"]
     description = item.get("description", "(説明文なし)")
     sample_images = item.get("sample_images", [])
 
@@ -213,7 +162,7 @@ def post_to_wp(item: dict) -> bool:
 
     # 投稿オブジェクト作成
     post = WordPressPost()
-    post.title = title
+    post.title   = title
     post.content = content
     if thumb_id:
         post.thumbnail = thumb_id
@@ -239,33 +188,21 @@ def post_to_wp(item: dict) -> bool:
         return False
 
 # ───────────────────────────────────────────────────────────
-# メイン処理：最新10件から重複でない最初の作品を投稿
+# メイン処理：APIから最新10件を取得し、重複でない最初の作品を投稿
 # ───────────────────────────────────────────────────────────
 def job():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start: fetching and posting")
     try:
-        videos = fetch_latest_videos(MAX_ITEMS)
+        videos = fetch_latest_videos_from_api(MAX_ITEMS)
         if not videos:
             print("No videos found.")
             return
 
         for vid_info in videos:
-            detail_url = vid_info["detail_url"]
-            title = vid_info["title"]
-            description, sample_images, label, genre = fetch_detail_info(detail_url)
-            item = {
-                "title": title,
-                "detail_url": detail_url,
-                "description": description,
-                "sample_images": sample_images,
-                "label": label,
-                "genre": genre
-            }
-            posted = post_to_wp(item)
+            posted = post_to_wp(vid_info)
             if posted:
                 break  # 投稿成功したらループを抜ける
-            else:
-                continue  # 重複なら次の作品へ
+            # 重複の場合は次の作品へ
 
     except Exception as e:
         print(f"Error in job(): {e}")
@@ -276,7 +213,7 @@ def job():
 # スケジューリング：4時間ごとに job() を実行
 # ───────────────────────────────────────────────────────────
 def main():
-    job()
+    job()  # 起動時に一度実行
     schedule.every(4).hours.do(job)
     print("Scheduler started. Running every 4 hours...")
     while True:
