@@ -21,7 +21,7 @@ WP_PASS            = os.getenv("WP_PASS")
 DMM_API_ID         = os.getenv("DMM_API_ID")
 DMM_AFFILIATE_ID   = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-MAX_ITEMS          = 10  # 重複チェックのために最大10件取得
+MAX_ITEMS          = 10  # 重複チェックのために最大10件を取得
 
 # 必須環境変数をチェック
 missing = []
@@ -33,17 +33,18 @@ if missing:
 
 # ───────────────────────────────────────────────────────────
 # DMM Affiliate API から最新アマチュア動画リストを取得
-#   └ site="FANZA" に変更
+#   site=DMM.R18, service=digital, floor=videoa_et, genre_id=8503 を指定
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos_from_api(max_items: int):
     endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
         "api_id":         DMM_API_ID,
         "affiliate_id":   DMM_AFFILIATE_ID,
-        "site":           "FANZA",         # ← ここを "DMM.R18" から "FANZA" に変更
-        "service":        "videoa",
-        "genre_id":       "8503",          # ジャンル8503（アマチュア）
-        "sort":           "-release_date", # 新着順（降順）
+        "site":           "DMM.R18",
+        "service":        "digital",
+        "floor":          "videoa_et",
+        "genre_id":       "8503",
+        "sort":           "-release_date",
         "hits":           max_items,
         "output":         "json"
     }
@@ -52,7 +53,6 @@ def fetch_latest_videos_from_api(max_items: int):
         resp = requests.get(endpoint, params=params, headers={"User-Agent": USER_AGENT})
         resp.raise_for_status()
     except requests.exceptions.HTTPError as e:
-        # エラー時にURLとレスポンスボディをログ出力
         print(f"HTTPError: {e} → URL: {resp.url}")
         try:
             print("Response JSON:", resp.json())
@@ -82,14 +82,16 @@ def fetch_latest_videos_from_api(max_items: int):
         if "label" in it and isinstance(it["label"], dict):
             label = it["label"].get("name", "").strip()
 
-        # ジャンル名取得（iteminfo 内の最初の genre）
-        genre = ""
+        # ジャンル名リスト取得
+        genres = []
         iteminfo = it.get("iteminfo", {})
-        genres = iteminfo.get("genre", []) if isinstance(iteminfo, dict) else []
-        if isinstance(genres, list) and genres:
-            fg = genres[0]
-            if isinstance(fg, dict):
-                genre = fg.get("name", "").strip()
+        raw_genres = iteminfo.get("genre", []) if isinstance(iteminfo, dict) else []
+        if isinstance(raw_genres, list):
+            for g in raw_genres:
+                if isinstance(g, dict):
+                    name = g.get("name", "").strip()
+                    if name:
+                        genres.append(name)
 
         videos.append({
             "title":         title,
@@ -97,18 +99,18 @@ def fetch_latest_videos_from_api(max_items: int):
             "description":   description,
             "sample_images": sample_images,
             "label":         label,
-            "genre":         genre
+            "genres":        genres
         })
 
     return videos
 
 # ───────────────────────────────────────────────────────────
-# WordPress に投稿（重複チェック、タグにレーベル・ジャンルを追加）
+# WordPress への投稿（重複チェック、タグにレーベルとジャンルの単語を追加）
 # ───────────────────────────────────────────────────────────
 def post_to_wp(item: dict) -> bool:
     wp = Client(WP_URL, WP_USER, WP_PASS)
 
-    # 重複チェック：同じタイトルがないか
+    # 重複チェック：同じタイトルの投稿がないか
     existing = wp.call(GetPosts({"post_status": "publish", "s": item["title"]}))
     if any(p.title == item["title"] for p in existing):
         print(f"→ Skipping duplicate: {item['title']}")
@@ -137,13 +139,13 @@ def post_to_wp(item: dict) -> bool:
     sample_images = item["sample_images"]
 
     content_parts = []
-    # 1) サムネ1枚目をリンク付きで
+    # 1) サムネ1枚目をアフィリンク付きで
     if sample_images:
         content_parts.append(
             f'<p><a href="{aff_link}" target="_blank">'
             f'<img src="{sample_images[0]}" alt="{title} サンプル1" /></a></p>'
         )
-    # 2) タイトルをリンク付きテキスト
+    # 2) タイトルをアフィリンク付きテキストで
     content_parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     # 3) 説明文
     content_parts.append(f'<p>{description}</p>')
@@ -163,12 +165,15 @@ def post_to_wp(item: dict) -> bool:
     if thumb_id:
         post.thumbnail = thumb_id
 
-    # タグにレーベルとジャンルをそれぞれ1つずつ追加
+    # タグにレーベルと、ジャンル名をスペースで分割した単語をすべて追加
     tags = []
     if item.get("label"):
         tags.append(item["label"])
-    if item.get("genre"):
-        tags.append(item["genre"])
+    for genre in item.get("genres", []):
+        for word in genre.split():
+            if word and word not in tags:
+                tags.append(word)
+
     post.terms_names = {
         "category": ["DMM動画"],
         "post_tag": tags
