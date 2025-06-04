@@ -11,7 +11,7 @@ from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
 # ───────────────────────────────────────────────────────────
-# 環境変数読み込み (.env があればその内容も読み込む)
+# 環境変数読み込み (.env があれば読み込む)
 # ───────────────────────────────────────────────────────────
 load_dotenv()
 
@@ -21,9 +21,9 @@ WP_PASS            = os.getenv("WP_PASS")
 DMM_API_ID         = os.getenv("DMM_API_ID")
 DMM_AFFILIATE_ID   = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-MAX_ITEMS          = 10  # 重複チェックのために最大10件を取得
+MAX_ITEMS          = 10  # 重複チェック用に最大10件を取得
 
-# 必須環境変数をチェック
+# 必須環境変数チェック
 missing = []
 for var in ("WP_URL", "WP_USER", "WP_PASS", "DMM_API_ID", "DMM_AFFILIATE_ID"):
     if not os.getenv(var):
@@ -33,18 +33,18 @@ if missing:
 
 # ───────────────────────────────────────────────────────────
 # DMM Affiliate API から最新アマチュア動画リストを取得
-#   site=DMM.R18, service=digital, floor=videoa_et, genre_id=8503 を指定
+#   site=FANZA, service=videoa, floor=videoa_et, genre_id=8503
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos_from_api(max_items: int):
     endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
         "api_id":         DMM_API_ID,
         "affiliate_id":   DMM_AFFILIATE_ID,
-        "site":           "DMM.R18",
-        "service":        "digital",
-        "floor":          "videoa_et",
-        "genre_id":       "8503",
-        "sort":           "-release_date",
+        "site":           "FANZA",         # FANZAサイト
+        "service":        "videoa",        # 動画サービス
+        "floor":          "videoa_et",     # アマチュア動画フロア
+        "genre_id":       "8503",          # アマチュアジャンル
+        "sort":           "-release_date", # 新着順（降順）
         "hits":           max_items,
         "output":         "json"
     }
@@ -105,7 +105,7 @@ def fetch_latest_videos_from_api(max_items: int):
     return videos
 
 # ───────────────────────────────────────────────────────────
-# WordPress への投稿（重複チェック、タグにレーベルとジャンルの単語を追加）
+# WordPress への投稿（重複チェック、タグにレーベルとジャンルの語をすべて追加）
 # ───────────────────────────────────────────────────────────
 def post_to_wp(item: dict) -> bool:
     wp = Client(WP_URL, WP_USER, WP_PASS)
@@ -132,7 +132,7 @@ def post_to_wp(item: dict) -> bool:
         except Exception as e:
             print(f"Warning: アイキャッチアップロード失敗 ({first_img}): {e}")
 
-    # 本文組み立て
+    # 本文を組み立て
     title         = item["title"]
     aff_link      = item["detail_url"]
     description   = item["description"]
@@ -165,7 +165,7 @@ def post_to_wp(item: dict) -> bool:
     if thumb_id:
         post.thumbnail = thumb_id
 
-    # タグにレーベルと、ジャンル名をスペースで分割した単語をすべて追加
+    # タグにレーベルと、ジャンル名をスペースで分割したすべての語を追加
     tags = []
     if item.get("label"):
         tags.append(item["label"])
@@ -189,7 +189,7 @@ def post_to_wp(item: dict) -> bool:
         return False
 
 # ───────────────────────────────────────────────────────────
-# メイン処理：APIから最新10件を取得し、重複でない最初の作品を投稿
+# メイン処理：API から最新10件を取得し、重複でない最初の作品を投稿
 # ───────────────────────────────────────────────────────────
 def job():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
@@ -201,7 +201,7 @@ def job():
 
         for vid in videos:
             if post_to_wp(vid):
-                break  # 投稿に成功したらループを抜ける
+                break  # 投稿成功したらループを抜ける
 
     except Exception as e:
         print(f"Error in job(): {e}")
