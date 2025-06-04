@@ -36,15 +36,15 @@ TODAY = datetime.now().date()
 
 # ───────────────────────────────────────────────────────────
 # DMM Affiliate API から最新アマチュア動画リストを取得
-#   site=FANZA, service=digital, genre_id=8503 （floor は省略）
+#   site=DMM.R18, service=videoa, genre_id=8503 （floor は省略）
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos_from_api(max_items: int):
     endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
         "api_id":         DMM_API_ID,
         "affiliate_id":   DMM_AFFILIATE_ID,
-        "site":           "FANZA",         # FANZAサイドを指定
-        "service":        "digital",       # デジタル商品
+        "site":           "DMM.R18",       # R18サイト
+        "service":        "videoa",        # 動画サービス
         "genre_id":       "8503",          # アマチュアジャンル
         "sort":           "-release_date", # 新着順（降順）
         "hits":           max_items,
