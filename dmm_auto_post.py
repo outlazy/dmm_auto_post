@@ -4,6 +4,7 @@
 import os
 import time
 import requests
+from datetime import datetime
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
@@ -31,6 +32,8 @@ for var in ("WP_URL", "WP_USER", "WP_PASS", "DMM_API_ID", "DMM_AFFILIATE_ID"):
 if missing:
     raise RuntimeError(f"環境変数が設定されていません: {', '.join(missing)}")
 
+TODAY = datetime.now().date()
+
 # ───────────────────────────────────────────────────────────
 # DMM Affiliate API から最新アマチュア動画リストを取得
 #   site=DMM.R18, service=digital, floor=videoa, genre_id=8503
@@ -42,34 +45,41 @@ def fetch_latest_videos_from_api(max_items: int):
         "affiliate_id":   DMM_AFFILIATE_ID,
         "site":           "DMM.R18",
         "service":        "digital",
-        "floor":          "videoa",
-        "genre_id":       "8503",
-        "sort":           "-release_date",
+        "floor":          "videoa",          # アマチュア動画フロア
+        "genre_id":       "8503",            # アマチュアジャンル
+        "sort":           "-release_date",   # 新着順（降順）
         "hits":           max_items,
         "output":         "json"
     }
 
-    try:
-        resp = requests.get(endpoint, params=params, headers={"User-Agent": USER_AGENT})
-        resp.raise_for_status()
-    except requests.exceptions.HTTPError as e:
-        print(f"HTTPError: {e} → URL: {resp.url}")
-        try:
-            print("Response JSON:", resp.json())
-        except Exception:
-            print("Response text:", resp.text[:200])
-        raise
-
+    resp = requests.get(endpoint, params=params, headers={"User-Agent": USER_AGENT})
+    resp.raise_for_status()
     data = resp.json()
     items = data.get("result", {}).get("items", [])
     videos = []
 
     for it in items:
+        # リリース日が含まれていればチェック
+        release_date_str = it.get("date") or it.get("release_date")  # API のキーは "date" で返ってくる
+        if release_date_str:
+            try:
+                # "YYYY-MM-DD" 形式
+                release_date = datetime.strptime(release_date_str, "%Y-%m-%d").date()
+                if release_date > TODAY:
+                    # まだ発売前ならスキップ
+                    continue
+            except ValueError:
+                pass
+
         title       = it.get("title", "").strip()
         detail_url  = it.get("affiliateURL", "").strip()
-        description = it.get("content", "").strip() or "(説明文なし)"
+        description = it.get("content", "").strip()
 
-        # サムネ画像URLを収集（値がリストの場合、その中身を展開）
+        # 説明文が空ならスキップ
+        if not description:
+            continue
+
+        # サムネ画像URLを収集
         sample_images = []
         sample_dict = it.get("sampleImageURL", {})
         if isinstance(sample_dict, dict):
@@ -79,8 +89,12 @@ def fetch_latest_videos_from_api(max_items: int):
                         if url and url not in sample_images:
                             sample_images.append(url)
                 elif isinstance(v, str):
-                    if v not in sample_images:
+                    if v and v not in sample_images:
                         sample_images.append(v)
+
+        # サンプル画像が1枚もない場合はスキップ
+        if not sample_images:
+            continue
 
         # レーベル名取得
         label = ""
@@ -145,19 +159,17 @@ def post_to_wp(item: dict) -> bool:
 
     content_parts = []
     # 1) サムネ1枚目をアフィリンク付きで
-    if sample_images:
-        content_parts.append(
-            f'<p><a href="{aff_link}" target="_blank">'
-            f'<img src="{sample_images[0]}" alt="{title} サンプル1" /></a></p>'
-        )
+    content_parts.append(
+        f'<p><a href="{aff_link}" target="_blank">'
+        f'<img src="{sample_images[0]}" alt="{title} サンプル1" /></a></p>'
+    )
     # 2) タイトルをアフィリンク付きテキストで
     content_parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     # 3) 説明文
     content_parts.append(f'<p>{description}</p>')
     # 4) 2枚目以降のサムネ画像をすべて貼る
-    if len(sample_images) > 1:
-        for idx, img_url in enumerate(sample_images[1:], start=2):
-            content_parts.append(f'<p><img src="{img_url}" alt="{title} サンプル{idx}" /></p>')
+    for idx, img_url in enumerate(sample_images[1:], start=2):
+        content_parts.append(f'<p><img src="{img_url}" alt="{title} サンプル{idx}" /></p>')
     # 5) 購入リンク
     content_parts.append(f'<p><a href="{aff_link}" target="_blank">▶ 購入はこちら</a></p>')
 
