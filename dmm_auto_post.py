@@ -36,18 +36,18 @@ TODAY = datetime.now().date()
 
 # ───────────────────────────────────────────────────────────
 # DMM Affiliate API から最新アマチュア動画リストを取得
-#   site=DMM.R18, service=digital, floor=videoa, genre_id=8503
+#   site=FANZA, service=digital, floor=videoa, genre_id=8503 でリクエスト
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos_from_api(max_items: int):
     endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
         "api_id":         DMM_API_ID,
         "affiliate_id":   DMM_AFFILIATE_ID,
-        "site":           "DMM.R18",
-        "service":        "digital",
-        "floor":          "videoa",          # アマチュア動画フロア
-        "genre_id":       "8503",            # アマチュアジャンル
-        "sort":           "-release_date",   # 新着順（降順）
+        "site":           "FANZA",         # FANZAサイトを指定
+        "service":        "digital",       # デジタル商品
+        "floor":          "videoa",        # アダルト動画フロア
+        "genre_id":       "8503",          # アマチュアジャンル
+        "sort":           "-release_date", # 新着順（降順）
         "hits":           max_items,
         "output":         "json"
     }
@@ -59,14 +59,12 @@ def fetch_latest_videos_from_api(max_items: int):
     videos = []
 
     for it in items:
-        # リリース日が含まれていればチェック
-        release_date_str = it.get("date") or it.get("release_date")  # API のキーは "date" で返ってくる
+        # リリース日チェック：発売前をスキップ
+        release_date_str = it.get("date") or it.get("release_date")
         if release_date_str:
             try:
-                # "YYYY-MM-DD" 形式
                 release_date = datetime.strptime(release_date_str, "%Y-%m-%d").date()
                 if release_date > TODAY:
-                    # まだ発売前ならスキップ
                     continue
             except ValueError:
                 pass
@@ -74,10 +72,8 @@ def fetch_latest_videos_from_api(max_items: int):
         title       = it.get("title", "").strip()
         detail_url  = it.get("affiliateURL", "").strip()
         description = it.get("content", "").strip()
-
-        # 説明文が空ならスキップ
         if not description:
-            continue
+            continue  # 説明文なしはスキップ
 
         # サムネ画像URLを収集
         sample_images = []
@@ -91,10 +87,8 @@ def fetch_latest_videos_from_api(max_items: int):
                 elif isinstance(v, str):
                     if v and v not in sample_images:
                         sample_images.append(v)
-
-        # サンプル画像が1枚もない場合はスキップ
         if not sample_images:
-            continue
+            continue  # 画像なしはスキップ
 
         # レーベル名取得
         label = ""
