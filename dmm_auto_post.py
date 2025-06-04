@@ -5,24 +5,22 @@ import os
 import time
 import requests
 import schedule
-from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
 # ───────────────────────────────────────────────────────────
-# 環境変数読み込み
+# 環境変数読み込み（GitHub Actions の secrets から取得）
 # ───────────────────────────────────────────────────────────
-load_dotenv()
-WP_URL        = os.getenv("WP_URL")
-WP_USER       = os.getenv("WP_USER")
-WP_PASS       = os.getenv("WP_PASS")
-DMM_API_ID    = os.getenv("DMM_API_ID", "").strip()
-AFFILIATE_ID  = os.getenv("AFFILIATE_ID", "").strip()
-USER_AGENT    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-# APIで取得する件数（重複チェックのために複数件取得）
-MAX_ITEMS     = 10
+WP_URL       = os.getenv("WP_URL")
+WP_USER      = os.getenv("WP_USER")
+WP_PASS      = os.getenv("WP_PASS")
+DMM_API_ID   = os.getenv("DMM_API_ID")
+AFFILIATE_ID = os.getenv("AFFILIATE_ID")
+USER_AGENT   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+# APIで取得する件数（同時に重複チェック用に複数件取得）
+MAX_ITEMS    = 10
 
 if not WP_URL or not WP_USER or not WP_PASS:
     raise RuntimeError("環境変数 WP_URL / WP_USER / WP_PASS が設定されていません")
@@ -33,29 +31,24 @@ if not DMM_API_ID or not AFFILIATE_ID:
 # DMM Affiliate API を使って最新のアマチュア動画リストを取得
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos_from_api(max_items: int):
-    """
-    DMM Affiliate API でジャンル8503の最新動画を取得
-    → 各アイテムの title, affiliateURL, content（説明文）, sampleImageURL（サムネ画像リスト）, label, genre を返す
-    """
     endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
         "api_id": DMM_API_ID,
         "affiliate_id": AFFILIATE_ID,
         "site": "DMM.R18",
         "service": "videoa",
-        "floor": "videoa_et",        # アマチュア系のフロア
-        "genre_id": "8503",
-        "sort": "-release_date",     # 新着順（降順）
+        "floor": "videoa_et",      # アマチュア系フロア
+        "genre_id": "8503",        # ジャンル8503
+        "sort": "-release_date",   # 新着順（降順）
         "hits": max_items,
         "output": "json"
     }
-    headers = {"User-Agent": USER_AGENT}
-    resp = requests.get(endpoint, params=params, headers=headers)
+    resp = requests.get(endpoint, params=params, headers={"User-Agent": USER_AGENT})
     resp.raise_for_status()
     data = resp.json()
-
     items = data.get("result", {}).get("items", [])
     videos = []
+
     for it in items:
         title       = it.get("title", "").strip()
         detail_url  = it.get("affiliateURL", "").strip()
@@ -74,7 +67,7 @@ def fetch_latest_videos_from_api(max_items: int):
         if "label" in it and isinstance(it["label"], dict):
             label = it["label"].get("name", "").strip()
 
-        # ジャンル名取得（iteminfo の genre リストから最初の要素）
+        # ジャンル名取得（iteminfo 内の genre の最初の要素）
         genre = ""
         iteminfo = it.get("iteminfo", {})
         genres = iteminfo.get("genre", []) if isinstance(iteminfo, dict) else []
@@ -95,24 +88,12 @@ def fetch_latest_videos_from_api(max_items: int):
     return videos
 
 # ───────────────────────────────────────────────────────────
-# WordPress に投稿（重複チェック付き、タグにレーベル・ジャンル追加）
+# WordPress に投稿（重複チェック付き、タグにレーベル・ジャンルを1つずつ追加）
 # ───────────────────────────────────────────────────────────
 def post_to_wp(item: dict) -> bool:
-    """
-    item の中身：
-      - title: 投稿タイトル
-      - detail_url: DMM のアフィリエイトリンク
-      - description: 説明文テキスト
-      - sample_images: 画像 URL リスト（1枚目含む）
-      - label: レーベル名
-      - genre: ジャンル名
-    戻り値：
-      - True: 投稿成功
-      - False: 重複などで投稿しなかった
-    """
     wp = Client(WP_URL, WP_USER, WP_PASS)
 
-    # 重複チェック：同じタイトルの投稿が存在しないか
+    # 重複チェック：同じタイトルの投稿があるか
     existing = wp.call(GetPosts({"post_status": "publish", "s": item["title"]}))
     if any(p.title == item["title"] for p in existing):
         print(f"→ Skipping duplicate: {item['title']}")
@@ -136,9 +117,9 @@ def post_to_wp(item: dict) -> bool:
             print(f"Warning: アイキャッチアップロード失敗 ({first_img_url}): {e}")
 
     # 投稿本文を組み立て
-    title       = item["title"]
-    aff_link    = item["detail_url"]
-    description = item.get("description", "(説明文なし)")
+    title         = item["title"]
+    aff_link      = item["detail_url"]
+    description   = item.get("description", "(説明文なし)")
     sample_images = item.get("sample_images", [])
 
     content_parts = []
@@ -148,16 +129,13 @@ def post_to_wp(item: dict) -> bool:
             f'<img src="{sample_images[0]}" alt="{title} サンプル1" />'
             f'</a></p>'
         )
-    content_parts.append(
-        f'<p><a href="{aff_link}" target="_blank">{title}</a></p>'
-    )
+    content_parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     content_parts.append(f'<p>{description}</p>')
     if len(sample_images) > 1:
         for idx, img_url in enumerate(sample_images[1:], start=2):
             content_parts.append(f'<p><img src="{img_url}" alt="{title} サンプル{idx}" /></p>')
-    content_parts.append(
-        f'<p><a href="{aff_link}" target="_blank">▶ 購入はこちら</a></p>'
-    )
+    content_parts.append(f'<p><a href="{aff_link}" target="_blank">▶ 購入はこちら</a></p>')
+
     content = "\n".join(content_parts)
 
     # 投稿オブジェクト作成
@@ -167,7 +145,7 @@ def post_to_wp(item: dict) -> bool:
     if thumb_id:
         post.thumbnail = thumb_id
 
-    # カテゴリ／タグ設定：レーベルとジャンルを1つずつタグに追加
+    # カテゴリ／タグ：レーベルとジャンルを1つずつ追加
     tags = []
     if item.get("label"):
         tags.append(item["label"])
@@ -202,7 +180,6 @@ def job():
             posted = post_to_wp(vid_info)
             if posted:
                 break  # 投稿成功したらループを抜ける
-            # 重複の場合は次の作品へ
 
     except Exception as e:
         print(f"Error in job(): {e}")
