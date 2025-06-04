@@ -9,10 +9,11 @@ jobs:
   auto-post:
     runs-on: ubuntu-latest
     env:
-      WP_URL: ${{ secrets.WP_URL }}
-      WP_USER: ${{ secrets.WP_USER }}
-      WP_PASS: ${{ secrets.WP_PASS }}
-      AFFILIATE_ID: ${{ secrets.AFFILIATE_ID }}
+      WP_URL:        ${{ secrets.WP_URL }}
+      WP_USER:       ${{ secrets.WP_USER }}
+      WP_PASS:       ${{ secrets.WP_PASS }}
+      DMM_API_ID:    ${{ secrets.DMM_API_ID }}
+      AFFILIATE_ID:  ${{ secrets.AFFILIATE_ID }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
