@@ -40,11 +40,11 @@ def fetch_latest_videos_from_api(max_items: int):
     params = {
         "api_id":         DMM_API_ID,
         "affiliate_id":   DMM_AFFILIATE_ID,
-        "site":           "DMM.R18",         # DMM成人向けサイト
-        "service":        "digital",         # デジタル商品取得
-        "floor":          "videoa",          # アダルト動画フロア
-        "genre_id":       "8503",            # アマチュアジャンル
-        "sort":           "-release_date",   # 新着順（降順）
+        "site":           "DMM.R18",
+        "service":        "digital",
+        "floor":          "videoa",
+        "genre_id":       "8503",
+        "sort":           "-release_date",
         "hits":           max_items,
         "output":         "json"
     }
@@ -69,13 +69,18 @@ def fetch_latest_videos_from_api(max_items: int):
         detail_url  = it.get("affiliateURL", "").strip()
         description = it.get("content", "").strip() or "(説明文なし)"
 
-        # サムネ画像URLを収集
+        # サムネ画像URLを収集（値がリストの場合、その中身を展開）
         sample_images = []
         sample_dict = it.get("sampleImageURL", {})
         if isinstance(sample_dict, dict):
-            for url in sample_dict.values():
-                if url and url not in sample_images:
-                    sample_images.append(url)
+            for v in sample_dict.values():
+                if isinstance(v, list):
+                    for url in v:
+                        if url and url not in sample_images:
+                            sample_images.append(url)
+                elif isinstance(v, str):
+                    if v not in sample_images:
+                        sample_images.append(v)
 
         # レーベル名取得
         label = ""
