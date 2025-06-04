@@ -2,18 +2,18 @@ name: DMM Auto Post
 
 on:
   schedule:
-    - cron: '0 */4 * * *'
-  workflow_dispatch:
+    - cron: '0 */4 * * *'   # ４時間おきにワークフローを起動
+  workflow_dispatch:       # 手動実行も可能にする
 
 jobs:
   auto-post:
     runs-on: ubuntu-latest
     env:
-      WP_URL:               ${{ secrets.WP_URL }}
-      WP_USER:              ${{ secrets.WP_USER }}
-      WP_PASS:              ${{ secrets.WP_PASS }}
-      DMM_API_ID:           ${{ secrets.DMM_API_ID }}
-      DMM_AFFILIATE_ID:     ${{ secrets.DMM_AFFILIATE_ID }}
+      WP_URL:             ${{ secrets.WP_URL }}
+      WP_USER:            ${{ secrets.WP_USER }}
+      WP_PASS:            ${{ secrets.WP_PASS }}
+      DMM_API_ID:         ${{ secrets.DMM_API_ID }}
+      DMM_AFFILIATE_ID:   ${{ secrets.DMM_AFFILIATE_ID }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -28,5 +28,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 python-wordpress-xmlrpc python-dotenv schedule
 
-      - name: Run DMM Auto Post
+      - name: Run DMM Auto Post (one-shot)
         run: python dmm_auto_post.py
