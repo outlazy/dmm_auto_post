@@ -4,7 +4,6 @@
 import os
 import time
 import requests
-import schedule
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
@@ -14,7 +13,7 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 # ───────────────────────────────────────────────────────────
 # 環境変数読み込み (.env があればその内容も読み込む)
 # ───────────────────────────────────────────────────────────
-load_dotenv()  # ローカル実行時は .env を読み込む
+load_dotenv()
 
 WP_URL             = os.getenv("WP_URL")
 WP_USER            = os.getenv("WP_USER")
@@ -34,16 +33,15 @@ if missing:
 
 # ───────────────────────────────────────────────────────────
 # DMM Affiliate API から最新アマチュア動画リストを取得
-#  → floorパラメータを外してリクエストを送る例
+#   └ site="FANZA" に変更
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos_from_api(max_items: int):
     endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
         "api_id":         DMM_API_ID,
         "affiliate_id":   DMM_AFFILIATE_ID,
-        "site":           "DMM.R18",
-        "service":        "videoa",        # アマチュア動画用サービス
-        # "floor":        "videoa_et",     # ← ここは外してみる
+        "site":           "FANZA",         # ← ここを "DMM.R18" から "FANZA" に変更
+        "service":        "videoa",
         "genre_id":       "8503",          # ジャンル8503（アマチュア）
         "sort":           "-release_date", # 新着順（降順）
         "hits":           max_items,
@@ -54,11 +52,10 @@ def fetch_latest_videos_from_api(max_items: int):
         resp = requests.get(endpoint, params=params, headers={"User-Agent": USER_AGENT})
         resp.raise_for_status()
     except requests.exceptions.HTTPError as e:
-        # エラー時にステータスコードとレスポンスボディを詳しくログ出力
+        # エラー時にURLとレスポンスボディをログ出力
         print(f"HTTPError: {e} → URL: {resp.url}")
         try:
-            error_json = resp.json()
-            print("Response JSON:", error_json)
+            print("Response JSON:", resp.json())
         except Exception:
             print("Response text:", resp.text[:200])
         raise
@@ -80,12 +77,12 @@ def fetch_latest_videos_from_api(max_items: int):
                 if url and url not in sample_images:
                     sample_images.append(url)
 
-        # レーベル名
+        # レーベル名取得
         label = ""
         if "label" in it and isinstance(it["label"], dict):
             label = it["label"].get("name", "").strip()
 
-        # ジャンル名（iteminfo 内の最初の genre）
+        # ジャンル名取得（iteminfo 内の最初の genre）
         genre = ""
         iteminfo = it.get("iteminfo", {})
         genres = iteminfo.get("genre", []) if isinstance(iteminfo, dict) else []
@@ -150,7 +147,7 @@ def post_to_wp(item: dict) -> bool:
     content_parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     # 3) 説明文
     content_parts.append(f'<p>{description}</p>')
-    # 4) 2枚目以降のサムネ画像をすべて
+    # 4) 2枚目以降のサムネ画像をすべて貼る
     if len(sample_images) > 1:
         for idx, img_url in enumerate(sample_images[1:], start=2):
             content_parts.append(f'<p><img src="{img_url}" alt="{title} サンプル{idx}" /></p>')
@@ -166,7 +163,7 @@ def post_to_wp(item: dict) -> bool:
     if thumb_id:
         post.thumbnail = thumb_id
 
-    # タグにレーベルとジャンルをそれぞれ1個ずつ追加
+    # タグにレーベルとジャンルをそれぞれ1つずつ追加
     tags = []
     if item.get("label"):
         tags.append(item["label"])
@@ -187,7 +184,7 @@ def post_to_wp(item: dict) -> bool:
         return False
 
 # ───────────────────────────────────────────────────────────
-# メイン処理：API から最新10件を取得し、重複でない最初の作品を投稿
+# メイン処理：APIから最新10件を取得し、重複でない最初の作品を投稿
 # ───────────────────────────────────────────────────────────
 def job():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
