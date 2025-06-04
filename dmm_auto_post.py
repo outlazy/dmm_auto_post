@@ -14,7 +14,7 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 # ───────────────────────────────────────────────────────────
 # 環境変数読み込み (.env があればその内容も読み込む)
 # ───────────────────────────────────────────────────────────
-load_dotenv()
+load_dotenv()  # ローカル実行時は .env を読み込む
 
 WP_URL             = os.getenv("WP_URL")
 WP_USER            = os.getenv("WP_USER")
@@ -22,7 +22,7 @@ WP_PASS            = os.getenv("WP_PASS")
 DMM_API_ID         = os.getenv("DMM_API_ID")
 DMM_AFFILIATE_ID   = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-MAX_ITEMS          = 10  # 重複チェック用に最大10件まで取得
+MAX_ITEMS          = 10  # 重複チェックのために最大10件取得
 
 # 必須環境変数をチェック
 missing = []
@@ -34,6 +34,7 @@ if missing:
 
 # ───────────────────────────────────────────────────────────
 # DMM Affiliate API から最新アマチュア動画リストを取得
+#  → floorパラメータを外してリクエストを送る例
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos_from_api(max_items: int):
     endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
@@ -41,15 +42,27 @@ def fetch_latest_videos_from_api(max_items: int):
         "api_id":         DMM_API_ID,
         "affiliate_id":   DMM_AFFILIATE_ID,
         "site":           "DMM.R18",
-        "service":        "videoa",
-        "floor":          "videoa_et",      # アマチュア系フロア
-        "genre_id":       "8503",           # ジャンル8503
-        "sort":           "-release_date",  # 新着順
+        "service":        "videoa",        # アマチュア動画用サービス
+        # "floor":        "videoa_et",     # ← ここは外してみる
+        "genre_id":       "8503",          # ジャンル8503（アマチュア）
+        "sort":           "-release_date", # 新着順（降順）
         "hits":           max_items,
         "output":         "json"
     }
-    resp = requests.get(endpoint, params=params, headers={"User-Agent": USER_AGENT})
-    resp.raise_for_status()
+
+    try:
+        resp = requests.get(endpoint, params=params, headers={"User-Agent": USER_AGENT})
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        # エラー時にステータスコードとレスポンスボディを詳しくログ出力
+        print(f"HTTPError: {e} → URL: {resp.url}")
+        try:
+            error_json = resp.json()
+            print("Response JSON:", error_json)
+        except Exception:
+            print("Response text:", resp.text[:200])
+        raise
+
     data = resp.json()
     items = data.get("result", {}).get("items", [])
     videos = []
@@ -174,7 +187,7 @@ def post_to_wp(item: dict) -> bool:
         return False
 
 # ───────────────────────────────────────────────────────────
-# メイン処理：APIから最新10件を取得し、重複でない最初の作品を投稿
+# メイン処理：API から最新10件を取得し、重複でない最初の作品を投稿
 # ───────────────────────────────────────────────────────────
 def job():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
@@ -186,7 +199,7 @@ def job():
 
         for vid in videos:
             if post_to_wp(vid):
-                break  # 成功したら終了
+                break  # 投稿に成功したらループを抜ける
 
     except Exception as e:
         print(f"Error in job(): {e}")
