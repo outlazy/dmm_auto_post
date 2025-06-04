@@ -36,16 +36,15 @@ TODAY = datetime.now().date()
 
 # ───────────────────────────────────────────────────────────
 # DMM Affiliate API から最新アマチュア動画リストを取得
-#   site=FANZA, service=digital, floor=videoa, genre_id=8503 でリクエスト
+#   site=FANZA, service=digital, genre_id=8503 （floor は省略）
 # ───────────────────────────────────────────────────────────
 def fetch_latest_videos_from_api(max_items: int):
     endpoint = "https://api.dmm.com/affiliate/v3/ItemList"
     params = {
         "api_id":         DMM_API_ID,
         "affiliate_id":   DMM_AFFILIATE_ID,
-        "site":           "FANZA",         # FANZAサイトを指定
+        "site":           "FANZA",         # FANZAサイドを指定
         "service":        "digital",       # デジタル商品
-        "floor":          "videoa",        # アダルト動画フロア
         "genre_id":       "8503",          # アマチュアジャンル
         "sort":           "-release_date", # 新着順（降順）
         "hits":           max_items,
@@ -73,7 +72,7 @@ def fetch_latest_videos_from_api(max_items: int):
         detail_url  = it.get("affiliateURL", "").strip()
         description = it.get("content", "").strip()
         if not description:
-            continue  # 説明文なしはスキップ
+            continue  # 説明文がなければスキップ
 
         # サムネ画像URLを収集
         sample_images = []
@@ -88,7 +87,7 @@ def fetch_latest_videos_from_api(max_items: int):
                     if v and v not in sample_images:
                         sample_images.append(v)
         if not sample_images:
-            continue  # 画像なしはスキップ
+            continue  # 画像がなければスキップ
 
         # レーベル名取得
         label = ""
