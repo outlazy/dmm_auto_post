@@ -8,6 +8,7 @@ collections.Iterable = collections.abc.Iterable
 
 import os
 import time
+import re
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
