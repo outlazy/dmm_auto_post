@@ -27,7 +27,7 @@ WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-LIST_URL   = "http://video.dmm.co.jp/amateur/list/?sort=date"
+LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
 MAX_ITEMS  = 10  # 一覧取得数
 
 # 必須環境変数チェック
@@ -91,32 +91,19 @@ def abs_url(href: str) -> str:
 def fetch_listed_videos(limit: int):
     session = get_session()
     resp = fetch_with_age_check(session, LIST_URL)
-    soup = BeautifulSoup(resp.text, "html.parser")
-
+    html = resp.text
+    # 正規表現で/amateur/detail/以下のURLを抽出
+    matches = re.findall(r'href=["\'](/amateur/detail/[^"\']+)', html)
+    seen = set()
     videos = []
-    # 1) li.list-box 内 a.tmb から取得 (新着順)
-    for a in soup.select("li.list-box a.tmb"):
-        href = a.get("href")
-        if not href:
+    for path in matches:
+        url = abs_url(path)
+        if url in seen:
             continue
-        url = abs_url(href)
-        title = a.get("title") or (a.img and a.img.get("alt")) or "No Title"
-        videos.append({"title": title, "detail_url": url})
+        seen.add(url)
+        videos.append({"detail_url": url})
         if len(videos) >= limit:
             break
-    # 2) フォールバック: /amateur/detail/ へのリンクを正規表現で抽出
-    if not videos:
-        html = resp.text
-        paths = re.findall(r'href=["\'](/amateur/detail/[^"\']+)', html)
-        seen = set()
-        for path in paths:
-            url = abs_url(path)
-            if url in seen:
-                continue
-            seen.add(url)
-            videos.append({"detail_url": url})
-            if len(videos) >= limit:
-                break
     print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
     return videos
 
