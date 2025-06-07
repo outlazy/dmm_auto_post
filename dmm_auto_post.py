@@ -59,16 +59,56 @@ def make_affiliate_link(url: str) -> str:
     new_query = urlencode(qs)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
-# Fetch latest amateur gyaru videos via Affiliate API and filter by genre
+# Fetch latest amateur gyaru videos via Affiliate API using floorList and ItemList
+from requests.exceptions import HTTPError
+
 def fetch_latest_videos() -> list[dict]:
-    resp = requests.get(ITEM_LIST_URL, params=LIST_PARAMS, timeout=10)
-    resp.raise_for_status()
-    items = resp.json().get("result", {}).get("items", [])
+    # 1) Get floorId for amateur service
+    fl_url = "https://api.dmm.com/affiliate/v3/floorList"
+    fl_params = {
+        "api_id":       API_ID,
+        "affiliate_id": AFF_ID,
+        "site":         "video",
+        "service":      "amateur",
+        "output":       "json",
+    }
+    try:
+        fl_resp = requests.get(fl_url, params=fl_params, timeout=10)
+        fl_resp.raise_for_status()
+        floors = fl_resp.json().get("result", {}).get("floor", [])
+        floor_id = floors[0].get("floorId") if floors else None
+    except HTTPError as e:
+        print(f"DEBUG: floorList API failed: {e}")
+        return []
+
+    if not floor_id:
+        print("DEBUG: No floorId found for amateur service")
+        return []
+
+    # 2) Fetch ItemList with floorId
+    il_params = {
+        "api_id":       API_ID,
+        "affiliate_id": AFF_ID,
+        "site":         "video",
+        "service":      "amateur",
+        "floorId":      floor_id,
+        "hits":         LIST_PARAMS.get("hits", 10),
+        "sort":         LIST_PARAMS.get("sort", "date"),
+        "output":       "json",
+    }
+    try:
+        il_resp = requests.get(ITEM_LIST_URL, params=il_params, timeout=10)
+        il_resp.raise_for_status()
+        items = il_resp.json().get("result", {}).get("items", [])
+    except HTTPError as e:
+        print(f"DEBUG: ItemList API failed: {e}")
+        return []
+
     videos = []
     for item in items:
+        # filter by genreId to ensure "8503"
         genres = item.get("genre", [])
-        # filter by genre id
-        if not any(g.get("genreId") == GENRE_TARGET_ID or g.get("id") == GENRE_TARGET_ID for g in genres):
+        if not any(g.get("genreId") == GENRE_TARGET_ID for g in genres):
             continue
         videos.append({
             "title":       item.get("title", "No Title"),
@@ -78,7 +118,7 @@ def fetch_latest_videos() -> list[dict]:
         })
         if len(videos) >= MAX_POST:
             break
-    print(f"DEBUG: API returned {len(videos)} videos after genre filter")
+    print(f"DEBUG: API returned {len(videos)} videos after floor+genre filter")
     return videos
 
 # Fetch sample images via Affiliate ItemDetail API
