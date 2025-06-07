@@ -91,13 +91,19 @@ def abs_url(href: str) -> str:
 def fetch_listed_videos(limit: int):
     session = get_session()
     resp = fetch_with_age_check(session, LIST_URL)
-    html = resp.text
-    # /amateur/detail/ へのリンクを正規表現で抽出
-    paths = re.findall(r'href=["\'](/amateur/detail/[^"\']+)', html)
-    seen = set()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
     videos = []
-    for path in paths:
-        url = abs_url(path)
+    seen = set()
+    # 絞り込み対象のパス断片リスト
+    patterns = ["/amateur/detail/", "/digital/videoc/-/detail/"]
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        # 絶対 URL 化
+        url = abs_url(href)
+        # 対象パターンが含まれているか確認
+        if not any(pat in href for pat in patterns):
+            continue
         if url in seen:
             continue
         seen.add(url)
