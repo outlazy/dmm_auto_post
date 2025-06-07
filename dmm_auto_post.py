@@ -63,9 +63,12 @@ def fetch_latest_videos():
     videos = []
     for item in items:
         videos.append({
-            "title":      item.get("title", "No Title"),
-            "detail_url": item.get("URL"),
-            "description":item.get("description", ""),
+            "title":       item.get("title", "No Title"),
+            "detail_url":  item.get("URL"),
+            "description": item.get("description", ""),
+            "actress":     [a.get("name") for a in item.get("actress", [])],
+            "label":       [l.get("name") for l in item.get("label", [])],
+            "genres":      [g.get("name") for g in item.get("genre", [])],
         })
     print(f"DEBUG: API returned {len(videos)} items")
     return videos
@@ -108,9 +111,8 @@ def create_wp_post(video):
     if any(p.title == title for p in existing):
         print(f"→ Skipping duplicate: {title}")
         return False
-    # Scrape images
+    # Scrape sample images
     images = scrape_detail_images(video["detail_url"])
-    # Skip if no images (not released)
     if not images:
         print(f"→ Skipping unreleased or no-sample item: {title}")
         return False
@@ -123,55 +125,24 @@ def create_wp_post(video):
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     if video.get("description"):
         parts.append(f'<div>{video["description"]}</div>')
-    # Insert remaining images
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
     # Final affiliate link
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    post = WordPressPost()
-    post.title = title
-    post.content = "
-".join(parts)
-    post.thumbnail = thumb_id
-    post.terms_names = {"category": ["DMM動画"], "post_tag": []}
-    post.post_status = "publish"
-    wp.call(posts.NewPost(post))
-    print(f"✔ Posted: {title}")
-    return True(video):
-    wp = Client(WP_URL, WP_USER, WP_PASS)
-    title = video["title"]
-    # Skip if duplicate
-    existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
-    if any(p.title == title for p in existing):
-        print(f"→ Skipping duplicate: {title}")
-        return False
-    # Scrape images
-    images = scrape_detail_images(video["detail_url"])
-    # Upload first image as featured
-    thumb_id = upload_image(wp, images[0]) if images else None
-    # Build content
-    aff_link = make_affiliate_link(video["detail_url"])
-    parts = []
-    if thumb_id:
-        parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
-    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    if video.get("description"):
-        parts.append(f'<div>{video["description"]}</div>')
-    for img in images[1:]:
-        parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
+    # Set tags by actress, label, genre
+    tags = [] + video.get("actress", []) + video.get("label", []) + video.get("genres", [])
+    # Create post object
     post = WordPressPost()
     post.title = title
     post.content = "\n".join(parts)
-    if thumb_id:
-        post.thumbnail = thumb_id
-    post.terms_names = {"category": ["DMM動画"], "post_tag": []}
+    post.thumbnail = thumb_id
+    post.terms_names = {"category": ["DMM動画"], "post_tag": tags}
     post.post_status = "publish"
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {title}")
     return True
 
-# Main
+# Main execution
 def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
     videos = fetch_latest_videos()
