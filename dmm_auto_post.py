@@ -19,7 +19,74 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # ───────────────────────────────────────────────────────────
-# 一覧ページから動画URL取得（正規表現ベース）
+# 環境変数読み込み & 定数定義
+# ───────────────────────────────────────────────────────────
+load_dotenv()
+WP_URL     = os.getenv("WP_URL")
+WP_USER    = os.getenv("WP_USER")
+WP_PASS    = os.getenv("WP_PASS")
+AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
+MAX_ITEMS  = 10  # 一覧取得数
+
+# 必須環境変数チェック
+for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
+    if not v:
+        raise RuntimeError(f"Missing environment variable: {name}")
+
+# ───────────────────────────────────────────────────────────
+# Affiliate 링크 생성
+# ───────────────────────────────────────────────────────────
+def make_affiliate_link(url: str) -> str:
+    p  = urlparse(url)
+    qs = dict(parse_qsl(p.query))
+    qs["affiliate_id"] = AFF_ID
+    return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(qs), p.fragment))
+
+# ───────────────────────────────────────────────────────────
+# DMM セッション取得 & Age-check bypass
+# ───────────────────────────────────────────────────────────
+def get_session():
+    s = requests.Session()
+    s.headers.update({"User-Agent": USER_AGENT})
+    # 成人確認バイパス用 Cookie
+    s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
+    s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
+    return s
+
+# ───────────────────────────────────────────────────────────
+# Age check フォーム自動送信
+# ───────────────────────────────────────────────────────────
+def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
+    resp = session.get(url, timeout=10)
+    if "age_check" in resp.url or "security_check" in resp.url or "I Agree" in resp.text:
+        soup = BeautifulSoup(resp.text, "html.parser")
+        agree = soup.find("a", string=re.compile(r"I Agree", re.I))
+        if agree and agree.get("href"):
+            session.get(agree["href"], timeout=10)
+        else:
+            form = soup.find("form")
+            if form and form.get("action"):
+                action = form["action"]
+                data = {inp.get("name"): inp.get("value", "ok") or "ok" for inp in form.find_all("input", attrs={"name": True})}
+                session.post(action, data=data, timeout=10)
+        resp = session.get(url, timeout=10)
+    resp.raise_for_status()
+    return resp
+
+# ───────────────────────────────────────────────────────────
+# URL 正規化
+# ───────────────────────────────────────────────────────────
+def abs_url(href: str) -> str:
+    if href.startswith("//"):
+        return f"https:{href}"
+    if href.startswith("/"):
+        return f"https://video.dmm.co.jp{href}"
+    return href
+
+# ───────────────────────────────────────────────────────────
+# 一覧ページから動画URL取得
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
     session = get_session()
@@ -48,14 +115,17 @@ def scrape_detail(url: str):
     resp = fetch_with_age_check(session, url)
     soup = BeautifulSoup(resp.text, "html.parser")
 
+    # タイトル
     h1 = soup.find("h1")
     title = h1.get_text(strip=True) if h1 else (soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title")
 
+    # 説明文
     d = soup.find(lambda tag: tag.name in ["div","p"] and ((tag.get("class") == ["mg-b20","lh4"]) or tag.get("id") == "sample-description"))
     desc = d.get_text(" ", strip=True) if d else ""
 
+    # サンプル画像
     imgs = []
-    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img", "figure img"):  
+    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img", "figure img"):
         for img in soup.select(sel):
             src = img.get("data-original") or img.get("src")
             if src and src not in imgs:
