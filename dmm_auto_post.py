@@ -18,29 +18,7 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # ───────────────────────────────────────────────────────────
-# Fetch HTML with age-check bypass
-# ───────────────────────────────────────────────────────────
-def get_page_html(session: requests.Session, url: str) -> str:
-    resp = session.get(url, timeout=10)
-    if "/age_check" in resp.url or "/security_check" in resp.url or "I Agree" in resp.text:
-        soup = BeautifulSoup(resp.text, "html.parser")
-        agree = soup.find("a", string=lambda t: t and "I Agree" in t)
-        if agree and agree.get("href"):
-            resp = session.get(agree["href"], timeout=10)
-    resp.raise_for_status()
-    return resp.text
-
-# ───────────────────────────────────────────────────────────
-def get_page_html(session: requests.Session, url: str) -> str:
-    resp = session.get(url, timeout=10)
-    if "/age_check" in resp.url or "/security_check" in resp.url or "I Agree" in resp.text:
-        soup = BeautifulSoup(resp.text, "html.parser")
-        agree = soup.find("a", string=lambda t: t and "I Agree" in t)
-        if agree and agree.get("href"):
-            resp = session.get(agree["href"], timeout=10)
-    resp.raise_for_status()
-    return resp.text
-
+# Load environment variables & constants
 # ───────────────────────────────────────────────────────────
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
@@ -53,7 +31,7 @@ LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
 MAX_ITEMS  = 10  # Number of videos to fetch
 
 # Validate required variables
-for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
+for name, v in [("WP_URL", WP_URL), ("WP_USER", WP_USER), ("WP_PASS", WP_PASS), ("DMM_AFFILIATE_ID", AFF_ID)]:
     if not v:
         raise RuntimeError(f"Missing environment variable: {name}")
 
@@ -61,10 +39,11 @@ for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_
 # Helper functions
 # ───────────────────────────────────────────────────────────
 def make_affiliate_link(url: str) -> str:
-    p   = urlparse(url)
-    qs  = dict(parse_qsl(p.query))
+    p = urlparse(url)
+    qs = dict(parse_qsl(p.query))
     qs["affiliate_id"] = AFF_ID
     return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(qs), p.fragment))
+
 
 def get_session() -> requests.Session:
     s = requests.Session()
@@ -73,91 +52,78 @@ def get_session() -> requests.Session:
     s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
     return s
 
-def abs_url(href: str) -> str:
-    if href.startswith("//"): return f"https:{href}"
-    if href.startswith("/"): return f"https://video.dmm.co.jp{href}"
-    return href
 
-# ───────────────────────────────────────────────────────────
-# Fetch HTML with age-check bypass
-# ───────────────────────────────────────────────────────────
 def get_page_html(session: requests.Session, url: str) -> str:
-    html = get_page_html(session, url)
-    soup = BeautifulSoup(html, "html.parser")(resp.text, "html.parser")
+    # Fetch page and handle age-check if presented
+    resp = session.get(url, timeout=10)
+    if "/age_check" in resp.url or "/security_check" in resp.url or "I Agree" in resp.text:
+        soup = BeautifulSoup(resp.text, "html.parser")
         agree = soup.find("a", string=lambda t: t and "I Agree" in t)
         if agree and agree.get("href"):
             resp = session.get(agree["href"], timeout=10)
     resp.raise_for_status()
     return resp.text
 
+
+def abs_url(href: str) -> str:
+    if href.startswith("//"): return f"https:{href}"
+    if href.startswith("/"):  return f"https://video.dmm.co.jp{href}"
+    return href
+
 # ───────────────────────────────────────────────────────────
-# Fetch latest videos list via DMM Affiliate API
+# Fetch latest videos list via DMM Affiliate API or fallback
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
-    if not DMM_API_ID:
-        raise RuntimeError("Missing environment variable: DMM_API_ID for Affiliate API")
-    # 1) Get floorId
-    fl_params = {
-        "api_id": DMM_API_ID,
-        "affiliate_id": AFF_ID,
-        "site": "video",
-        "service": "amateur",
-        "output": "json"
-    }
-    fl_url = "https://api.dmm.com/affiliate/v3/floorList"
-    try:
-        fl_resp = requests.get(fl_url, params=fl_params, timeout=10)
-        fl_resp.raise_for_status()
-        fl_data = fl_resp.json()
-        floor_items = fl_data.get("result", {}).get("floor", [])
-        floor_id = floor_items[0].get("floorId") if floor_items else None
-    except Exception as e:
-        print(f"DEBUG: floorList API failed ({e}), falling back to HTML scraping")
-        floor_id = None
-
-    # 2) Fetch via ItemList
-    if floor_id:
-        il_params = {
-            "api_id": DMM_API_ID,
-            "affiliate_id": AFF_ID,
-            "site": "video",
-            "service": "amateur",
-            "floorId": floor_id,
-            "hits": limit,
-            "sort": "date",
-            "output": "json"
+    # Use API if available
+    if DMM_API_ID:
+        fl_params = {
+            "api_id":        DMM_API_ID,
+            "affiliate_id":  AFF_ID,
+            "site":          "video",
+            "service":       "amateur",
+            "output":        "json",
         }
-        il_url = "https://api.dmm.com/affiliate/v3/ItemList"
         try:
-            il_resp = requests.get(il_url, params=il_params, timeout=10)
-            il_resp.raise_for_status()
-            il_data = il_resp.json()
-            items = il_data.get("result", {}).get("items", [])
-            videos = []
-            for itm in items:
-                videos.append({
-                    "title": itm.get("title", "No Title"),
-                    "detail_url": itm.get("URL")
-                })
-            print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
-            return videos
-        except Exception as e:
-            print(f"DEBUG: ItemList API failed ({e}), falling back to HTML scraping")
+            fl = requests.get("https://api.dmm.com/affiliate/v3/floorList", params=fl_params, timeout=10)
+            fl.raise_for_status()
+            floor_list = fl.json().get("result", {}).get("floor", [])
+            floor_id = floor_list[0].get("floorId") if floor_list else None
+        except:
+            floor_id = None
 
-    # 3) Fallback: HTML scraping
+        if floor_id:
+            il_params = {
+                "api_id":        DMM_API_ID,
+                "affiliate_id":  AFF_ID,
+                "site":          "video",
+                "service":       "amateur",
+                "floorId":       floor_id,
+                "hits":          limit,
+                "sort":          "date",
+                "output":        "json",
+            }
+            try:
+                il = requests.get("https://api.dmm.com/affiliate/v3/ItemList", params=il_params, timeout=10)
+                il.raise_for_status()
+                items = il.json().get("result", {}).get("items", [])
+                videos = [{"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")} for itm in items]
+                print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
+                return videos
+            except:
+                pass
+
+    # Fallback HTML scraping
     session = get_session()
     html = get_page_html(session, LIST_URL)
-    soup = BeautifulSoup(html, "html.parser")(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     videos = []
     for li in soup.select("li.list-box")[:limit]:
         a = li.find("a", class_="tmb")
         if not a or not a.get("href"): continue
         url = abs_url(a["href"])
-        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or (
-            li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title"
-        )
+        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title")
         videos.append({"title": title, "detail_url": url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping from {LIST_URL}")
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping")
     return videos
 
 # ───────────────────────────────────────────────────────────
@@ -165,14 +131,10 @@ def fetch_listed_videos(limit: int):
 # ───────────────────────────────────────────────────────────
 def scrape_detail(url: str):
     session = get_session()
-    resp = session.get(url, timeout=10)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-
+    html = get_page_html(session, url)
+    soup = BeautifulSoup(html, "html.parser")
     h1 = soup.find("h1")
-    title = h1.get_text(strip=True) if h1 else (
-        soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title"
-    )
+    title = h1.get_text(strip=True) if h1 else (soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title")
     d = soup.find("div", class_="mg-b20 lh4") or soup.find("p", id="sample-description")
     desc = d.get_text(" ", strip=True) if d else ""
     imgs = []
@@ -187,7 +149,7 @@ def scrape_detail(url: str):
     return title, desc, imgs
 
 # ───────────────────────────────────────────────────────────
-# Upload image
+# Upload image to WP
 # ───────────────────────────────────────────────────────────
 def upload_image(wp: Client, url: str) -> int:
     data = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10).content
@@ -215,8 +177,8 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str) -> b
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
     parts.append(f'<div>{desc}</div>')
     for img in imgs[1:]: parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    if imgs: parts.append(f'<p><a href="{aff}" target="_blank"><img src="{imgs[0]}" alt="{title}"></a></p>')
-    parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
+    if imgs: parts.append(f'<p><a href=\"{aff}\" target=\"_blank\"><img src=\"{imgs[0]}\" alt=\"{title}\"></a></p>')
+    parts.append(f'<p><a href=\"{aff}\" target=\"_blank\">{title}</a></p>')
     post = WordPressPost(); post.title=title; post.content="\n".join(parts)
     if thumb_id: post.thumbnail=thumb_id
     post.terms_names={"category":["DMM動画"],"post_tag":[]}; post.post_status="publish"
