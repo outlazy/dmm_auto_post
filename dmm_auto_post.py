@@ -61,8 +61,18 @@ def fetch_latest_videos():
         return []
     data = resp.json()
     items = data.get("result", {}).get("items", [])
-    videos = []
+        videos = []
     for item in items:
+        # collect API image as fallback
+        api_img = None
+        img_info = item.get("imageURL", {})
+        if img_info:
+            # imageURL.large can be list or string
+            large = img_info.get("large")
+            if isinstance(large, list) and large:
+                api_img = large[0]
+            elif isinstance(large, str):
+                api_img = large
         videos.append({
             "title":       item.get("title", "No Title"),
             "detail_url":  item.get("URL"),
@@ -70,6 +80,7 @@ def fetch_latest_videos():
             "actress":     [a.get("name") for a in item.get("actress", [])],
             "label":       [l.get("name") for l in item.get("label", [])],
             "genres":      [g.get("name") for g in item.get("genre", [])],
+            "api_image":   api_img,
         })
     print(f"DEBUG: API returned {len(videos)} items")
     return videos
