@@ -3,7 +3,7 @@
 
 import collections
 import collections.abc
-# wordpress_xmlrpc が内部で collections.Iterable を参照するためのパッチ
+# wordpress_xmlrpc の互換性パッチ
 collections.Iterable = collections.abc.Iterable
 
 import os
@@ -20,12 +20,12 @@ from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 # 環境変数読み込み
 # ───────────────────────────────────────────────────────────
 load_dotenv()
-WP_URL      = os.getenv("WP_URL")
-WP_USER     = os.getenv("WP_USER")
-WP_PASS     = os.getenv("WP_PASS")
-AFF_ID      = os.getenv("DMM_AFFILIATE_ID")
-USER_AGENT  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-DETAIL_URL  = "https://www.dmm.co.jp/digital/videoc/-/detail/=/cid=docs087/?i3_ref=list&i3_ord=1&i3_pst=1"
+WP_URL     = os.getenv("WP_URL")
+WP_USER    = os.getenv("WP_USER")
+WP_PASS    = os.getenv("WP_PASS")
+AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+DETAIL_URL = "https://www.dmm.co.jp/digital/videoc/-/detail/=/cid=docs087/?i3_ref=list&i3_ord=1&i3_pst=1"
 
 # 必須チェック
 for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
@@ -33,8 +33,8 @@ for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_
         raise RuntimeError(f"Missing environment variable: {name}")
 
 def make_affiliate_link(url: str) -> str:
-    p = urlparse(url)
-    qs = dict(parse_qsl(p.query))
+    p   = urlparse(url)
+    qs  = dict(parse_qsl(p.query))
     qs["affiliate_id"] = AFF_ID
     return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(qs), p.fragment))
 
@@ -52,21 +52,32 @@ def scrape_detail(url: str):
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # タイトル
-    title_tag = soup.find("h1") or soup.find("meta", property="og:title")
-    title = title_tag.get_text(strip=True) if title_tag.name == "h1" else title_tag["content"]
+    # — タイトル取得（<h1> → og:title → デフォルト）
+    title = None
+    h1 = soup.find("h1")
+    if h1:
+        title = h1.get_text(strip=True)
+    else:
+        og = soup.find("meta", property="og:title")
+        if og and og.get("content"):
+            title = og["content"].strip()
+    if not title:
+        title = "No Title"
+        print(f"Warning: タイトルが見つかりませんでした → {url}")
 
-    # 説明文
+    # — 説明文 —
+    desc = ""
     d = (
         soup.find("div", class_="mg-b20 lh4")
         or soup.find("div", id="sample-description")
         or soup.find("p", id="sample-description")
     )
-    desc = d.get_text(" ", strip=True) if d else ""
-    if not desc:
-        print("Warning: 説明文なし")
+    if d:
+        desc = d.get_text(" ", strip=True)
+    else:
+        print(f"Warning: 説明文が見つかりませんでした → {url}")
 
-    # サンプル画像
+    # — サンプル画像 —
     imgs = []
     for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img"):
         for img in soup.select(sel):
@@ -76,7 +87,7 @@ def scrape_detail(url: str):
         if imgs:
             break
     if not imgs:
-        print("Warning: サンプル画像なし")
+        print(f"Warning: サンプル画像が見つかりませんでした → {url}")
 
     return title, desc, imgs
 
@@ -100,7 +111,7 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
         print("既存投稿をスキップ")
         return
 
-    # アイキャッチ
+    # アイキャッチ登録
     thumb_id = None
     if imgs:
         try:
@@ -116,21 +127,21 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
     if imgs:
         parts.append(f'<p><a href="{aff}" target="_blank"><img src="{imgs[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
-    # ② 本文
+    # ② 説明文
     parts.append(f'<div>{desc}</div>')
-    # ③ 残り画像
+    # ③ 残りサンプル画像
     for img in imgs[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    # ④ 再度画像＋タイトル
+    # ④ もう一度画像＋タイトル
     if imgs:
         parts.append(f'<p><a href="{aff}" target="_blank"><img src="{imgs[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
 
     post = WordPressPost()
-    post.title        = title
-    post.content      = "\n".join(parts)
-    post.terms_names  = {"category": ["DMM動画"], "post_tag": []}
-    post.post_status  = "publish"
+    post.title       = title
+    post.content     = "\n".join(parts)
+    post.terms_names = {"category": ["DMM動画"], "post_tag": []}
+    post.post_status = "publish"
     if thumb_id:
         post.thumbnail = thumb_id
 
