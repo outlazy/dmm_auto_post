@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 
 import os
+import collections
+import collections.abc
+# Compatibility patch for wordpress_xmlrpc
+collections.Iterable = collections.abc.Iterable
 import time
 import requests
 from dotenv import load_dotenv
