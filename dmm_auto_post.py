@@ -91,29 +91,41 @@ def abs_url(href: str) -> str:
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
     """
-    Use DMM Affiliate API if available, else HTML scrape li.list-box a.tmb
+    Fetch latest amateur videos via HTML regex first, then fallback to li.list-box scraping.
     """
-    api_id = os.getenv("DMM_API_ID")
-    if api_id:
-        params = {
-            "api_id":       api_id,
-            "affiliate_id": AFF_ID,
-            "site":         "video",
-            "service":      "amateur",
-            "sort":         "date",
-            "genre_id":     "8503",
-            "hits":         limit,
-            "output":       "json",
-        }
-        api_url = "https://api.dmm.com/affiliate/v3/ItemList"
-        try:
-            resp = requests.get(api_url, params=params, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            items = data.get("result", {}).get("items", [])
-            videos = [{"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")} for itm in items]
-            print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
-            return videos
+    session = get_session()
+    resp = session.get(LIST_URL, timeout=10)
+    html = resp.text
+    videos = []
+    seen = set()
+
+    # 1) Regex: extract absolute and relative detail links
+    abs_links = re.findall(r'href=["\'](https?://video\.dmm\.co\.jp/amateur/detail/[^"\']+)["\']', html)
+    rel_links = re.findall(r'href=["\'](/amateur/detail/[^"\']+)["\']', html)
+    for path in abs_links + rel_links:
+        url = path if path.startswith("http") else abs_url(path)
+        if url in seen:
+            continue
+        seen.add(url)
+        videos.append({"title": None, "detail_url": url})
+        if len(videos) >= limit:
+            break
+
+    # 2) Fallback: <li class="list-box"> scraping
+    if not videos:
+        soup = BeautifulSoup(html, "html.parser")
+        for li in soup.select("li.list-box")[:limit]:
+            a = li.find("a", class_="tmb")
+            if not a or not a.get("href"):
+                continue
+            url = abs_url(a["href"])
+            title = a.img.get("alt").strip() if a.img and a.img.get("alt") else a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title")
+            if url in seen:
+                continue
+            seen.add(url)
+            videos.append({"title": title, "detail_url": url})
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
+    return videos
         except Exception as e:
             print(f"DEBUG: DMM API fetch failed: {e}, falling back to HTML scraping")
 
