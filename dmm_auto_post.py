@@ -8,6 +8,7 @@ collections.Iterable = collections.abc.Iterable
 
 import os
 import time
+import re
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -49,7 +50,6 @@ def make_affiliate_link(url: str) -> str:
 def get_session():
     s = requests.Session()
     s.headers.update({"User-Agent": USER_AGENT})
-    # クッキーセット
     s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
     s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
     return s
@@ -59,15 +59,12 @@ def get_session():
 # ───────────────────────────────────────────────────────────
 def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
     resp = session.get(url, timeout=10)
-    # age_check フォームがある場合
-    if "age_check" in resp.url or resp.text.find("I Agree") != -1:
+    if "age_check" in resp.url or "I Agree" in resp.text:
         soup = BeautifulSoup(resp.text, "html.parser")
         form = soup.find("form")
         if form and form.get("action"):
             action = form["action"]
-            data = {}
-            for inp in form.find_all("input", attrs={"name": True}):
-                data[inp["name"]] = inp.get("value", "ok") or "ok"
+            data = {inp["name"]: inp.get("value", "ok") or "ok" for inp in form.find_all("input", attrs={"name": True})}
             session.post(action, data=data, timeout=10)
             resp = session.get(url, timeout=10)
     resp.raise_for_status()
@@ -92,26 +89,30 @@ def fetch_listed_videos(limit: int):
     soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
+    # 新着順リスト: li.list-box 内の a.tmb を優先取得
     for li in soup.select("li.list-box"):  
         a = li.find("a", class_="tmb")
-        if not a or not a.get("href"):
-            continue
-        href = a.get("href")
-        url = abs_url(href)
-        title = a.get("title") or (li.find("p", class_="title") and li.find("p", class_="title").get_text(strip=True)) or (a.img and a.img.get("alt")) or "No Title"
-        videos.append({"title": title, "detail_url": url})
+        if a and a.get("href"):
+            href = a["href"]
+            videos.append({
+                "title": a.get("title") or (li.find("p", class_="title") and li.find("p", class_="title").get_text(strip=True)) or "No Title",
+                "detail_url": abs_url(href)
+            })
         if len(videos) >= limit:
             break
+
+    # フォールバック: 汎用的に /amateur/ を含むリンクから取得
     if not videos:
-        for a in soup.select("a.tmb"):
-            href = a.get("href")
-            if not href:
-                continue
-            url = abs_url(href)
-            title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True) or "No Title"
-            videos.append({"title": title, "detail_url": url})
-            if len(videos) >= limit:
-                break
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "/amateur/" in href:
+                title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True) or "No Title"
+                videos.append({"title": title, "detail_url": abs_url(href)})
+                if len(videos) >= limit:
+                    break
+
+    # デバッグ: 取得件数
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
     return videos
 
 # ───────────────────────────────────────────────────────────
@@ -123,30 +124,23 @@ def scrape_detail(url: str):
     soup = BeautifulSoup(resp.text, "html.parser")
 
     h1 = soup.find("h1")
-    if h1:
-        title = h1.get_text(strip=True)
-    else:
-        og = soup.find("meta", property="og:title")
-        title = og["content"].strip() if og and og.get("content") else "No Title"
+    title = h1.get_text(strip=True) if h1 else (soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title")
 
-    d = (soup.find("div", class_="mg-b20 lh4")
-         or soup.find("div", id="sample-description")
-         or soup.find("p", id="sample-description"))
+    d = soup.find(lambda tag: tag.name in ["div","p"] and (tag.get("class") == ["mg-b20","lh4"] or tag.get("id") == "sample-description"))
     desc = d.get_text(" ", strip=True) if d else ""
 
     imgs = []
-    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img"):
+    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img", "figure img"):  
         for img in soup.select(sel):
             src = img.get("data-original") or img.get("src")
             if src and src not in imgs:
                 imgs.append(src)
         if imgs:
             break
-    if not imgs:
-        og_img = soup.find("meta", property="og:image")
-        if og_img and og_img.get("content"):
-            imgs.append(og_img["content"].strip())
+    if not imgs and soup.find("meta", property="og:image"):
+        imgs.append(soup.find("meta", property="og:image")["content"].strip())
 
+    print(f"DEBUG: scrape_detail for {url} yielded {len(imgs)} images")
     return title, desc, imgs
 
 # ───────────────────────────────────────────────────────────
