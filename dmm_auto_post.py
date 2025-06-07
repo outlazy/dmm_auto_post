@@ -93,27 +93,44 @@ def abs_url(href: str) -> str:
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
     """
-    HTMLスクレイピングで新着動画の一覧を取得します。
-    <li class="list-box"> の中の <a class="tmb"> から href とタイトル(alt)を抽出します。
+    DMMアフィリエイトAPIで新着順に Amateur 動画を取得し、API失敗時はHTMLスクレイピングにフォールバックします。
     """
+    # API経由で取得
+    api_id = os.getenv("DMM_API_ID")
+    if api_id:
+        params = {
+            "api_id": api_id,
+            "affiliate_id": AFF_ID,
+            "site": "video",
+            "service": "amateur",
+            "sort": "date",
+            "genre_id": "8503",
+            "hits": limit,
+            "output": "json"
+        }
+        url = "https://api.dmm.com/affiliate/v3/ItemList"
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("result", {}).get("items", [])
+            videos = [{"title": itm.get("title"), "detail_url": itm.get("URL")} for itm in items]
+            print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
+            return videos
+        except Exception as e:
+            print(f"DEBUG: DMM API fetch failed: {e}, falling back to HTML scraping")
+
+    # HTMLスクレイピングにフォールバック
     session = get_session()
     resp = fetch_with_age_check(session, LIST_URL)
     soup = BeautifulSoup(resp.text, "html.parser")
-
     videos = []
-    # <li class="list-box"> の各要素から取得
     for li in soup.select("li.list-box")[:limit]:
         a = li.find("a", class_="tmb")
         if not a or not a.get("href"):
             continue
-        href = a["href"]
-        url = abs_url(href)
-        # タイトルは img.alt または a.title 属性
-        title = None
-        if a.img and a.img.get("alt"):
-            title = a.img.get("alt").strip()
-        else:
-            title = a.get("title") or li.find("p", class_="title").get_text(strip=True)
+        url = abs_url(a["href"])
+        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or li.find("p", class_="title").get_text(strip=True)
         videos.append({"title": title, "detail_url": url})
     print(f"DEBUG: fetch_listed_videos found {len(videos)} items via <li.list-box> scraping from {LIST_URL}")
     return videos
