@@ -60,7 +60,6 @@ def fetch_latest_videos():
         print(f"DEBUG: API request failed: {e}")
         return []
     data = resp.json()
-        data = resp.json()
     items = data.get("result", {}).get("items", [])
     videos = []
     for item in items:
@@ -68,7 +67,6 @@ def fetch_latest_videos():
         api_img = None
         img_info = item.get("imageURL", {})
         if img_info:
-            # imageURL.large can be list or string
             large = img_info.get("large")
             if isinstance(large, list) and large:
                 api_img = large[0]
@@ -86,7 +84,7 @@ def fetch_latest_videos():
     print(f"DEBUG: API returned {len(videos)} items")
     return videos
 
-# Scrape detail page for sample images
+# Scrape detail page for sample images for sample images
 def scrape_detail_images(detail_url: str) -> list[str]:
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0"})
