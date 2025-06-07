@@ -63,29 +63,74 @@ def abs_url(href: str) -> str:
 # Fetch latest videos list via DMM Affiliate API
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
+    """
+    Fetch latest amateur videos via DMM Affiliate API (using floorList and itemList), fallback to HTML scraping.
+    """
     if not DMM_API_ID:
         raise RuntimeError("Missing environment variable: DMM_API_ID for Affiliate API")
 
-    # API parameters (FANZA Digital Videoa)
-    params = {
+    # 1) Get floorId via floorList
+    fl_params = {
         "api_id":       DMM_API_ID,
         "affiliate_id": AFF_ID,
-        "site":         "FANZA",
-        "service":      "digital",
-        "floor":        "videoa",
-        "hits":         limit,
-        "sort":         "date",
+        "site":         "video",
+        "service":      "amateur",
         "output":       "json",
     }
-    api_url = "https://api.dmm.com/affiliate/v3/ItemList"
+    fl_url = "https://api.dmm.com/affiliate/v3/floorList"
     try:
-        resp = requests.get(api_url, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        items = data.get("result", {}).get("items", [])
-        videos = [{"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")} for itm in items]
-        print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
-        return videos
+        fl_resp = requests.get(fl_url, params=fl_params, timeout=10)
+        fl_resp.raise_for_status()
+        fl_data = fl_resp.json()
+        floor_items = fl_data.get("result", {}).get("floor", [])
+        # Prefer floor named "Amateur" or use first
+        floor_id = None
+        for f in floor_items:
+            if f.get("serviceName") == "Amateur" or f.get("floorId"):
+                floor_id = f.get("floorId")
+                break
+    except Exception as e:
+        print(f"DEBUG: floorList API failed ({e}), falling back to HTML scraping")
+        floor_id = None
+
+    videos = []
+    # 2) Fetch via itemList API if floor_id available
+    if floor_id:
+        il_params = {
+            "api_id":       DMM_API_ID,
+            "affiliate_id": AFF_ID,
+            "site":         "video",
+            "service":      "amateur",
+            "floorId":      floor_id,
+            "hits":         limit,
+            "sort":         "date",
+            "output":       "json",
+        }
+        il_url = "https://api.dmm.com/affiliate/v3/ItemList"
+        try:
+            il_resp = requests.get(il_url, params=il_params, timeout=10)
+            il_resp.raise_for_status()
+            il_data = il_resp.json()
+            items = il_data.get("result", {}).get("items", [])
+            videos = [{"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")} for itm in items]
+            print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
+            return videos
+        except Exception as e:
+            print(f"DEBUG: ItemList API failed ({e}), falling back to HTML scraping")
+
+    # 3) Fallback HTML scraping
+    session = get_session()
+    resp = session.get(LIST_URL, timeout=10)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for li in soup.select("li.list-box")[:limit]:
+        a = li.find("a", class_="tmb")
+        if not a or not a.get("href"):
+            continue
+        url = abs_url(a.get("href"))
+        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title")
+        videos.append({"title": title, "detail_url": url})
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping")
+    return videos
     except Exception as e:
         print(f"DEBUG: DMM API fetch failed ({e}), falling back to HTML scraping")
 
