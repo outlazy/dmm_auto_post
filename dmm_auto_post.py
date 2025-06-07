@@ -17,7 +17,8 @@ from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # Load environment variables
 def load_env():
-    load_dotenv()
+    from dotenv import load_dotenv as ld
+    ld()
     env = {
         "WP_URL":     os.getenv("WP_URL"),
         "WP_USER":    os.getenv("WP_USER"),
@@ -31,23 +32,24 @@ def load_env():
     return env
 
 env = load_env()
-WP_URL, WP_USER, WP_PASS, AFF_ID, API_ID = env["WP_URL"], env["WP_USER"], env["WP_PASS"], env["AFF_ID"], env["API_ID"]
+WP_URL, WP_USER, WP_PASS, AFF_ID, API_ID = env.values()
 
 # Affiliate API endpoints
 ITEM_LIST_URL = "https://api.dmm.com/affiliate/v3/ItemList"
 ITEM_DETAIL_URL = "https://api.dmm.com/affiliate/v3/ItemDetail"
 
-# Parameters for listing amateur gyaru videos
+# Parameters for listing amateur videos (no genre filter)
 LIST_PARAMS = {
     "api_id":       API_ID,
     "affiliate_id": AFF_ID,
     "site":         "video",
     "service":      "amateur",
-    "genre_id":     "8503",
-    "hits":         10,
+    "hits":         20,
     "sort":         "date",
     "output":       "json",
 }
+GENRE_TARGET_ID = "8503"  # amateur gyaru
+MAX_POST = 10
 
 # Build affiliate link
 def make_affiliate_link(url: str) -> str:
@@ -57,19 +59,26 @@ def make_affiliate_link(url: str) -> str:
     new_query = urlencode(qs)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
-# Fetch latest amateur videos via Affiliate API
+# Fetch latest amateur gyaru videos via Affiliate API and filter by genre
 def fetch_latest_videos() -> list[dict]:
     resp = requests.get(ITEM_LIST_URL, params=LIST_PARAMS, timeout=10)
     resp.raise_for_status()
-    data = resp.json().get("result", {}).get("items", [])
+    items = resp.json().get("result", {}).get("items", [])
     videos = []
-    for item in data:
+    for item in items:
+        genres = item.get("genre", [])
+        # filter by genre id
+        if not any(g.get("genreId") == GENRE_TARGET_ID or g.get("id") == GENRE_TARGET_ID for g in genres):
+            continue
         videos.append({
-            "title":      item.get("title", "No Title"),
-            "detail_url": item.get("URL"),
-            "description":item.get("description", ""),
-            "cid":        item.get("content_id") or item.get("cid"),
+            "title":       item.get("title", "No Title"),
+            "detail_url":  item.get("URL"),
+            "description": item.get("description", ""),
+            "cid":         item.get("content_id") or item.get("cid"),
         })
+        if len(videos) >= MAX_POST:
+            break
+    print(f"DEBUG: API returned {len(videos)} videos after genre filter")
     return videos
 
 # Fetch sample images via Affiliate ItemDetail API
@@ -87,11 +96,11 @@ def fetch_sample_images(cid: str) -> list[str]:
     items = resp.json().get("result", {}).get("items", [])
     if not items:
         return []
-    sample_urls = items[0].get("sampleImageURL", {}).get("large")
-    if isinstance(sample_urls, list):
-        return sample_urls
-    if isinstance(sample_urls, str):
-        return [sample_urls]
+    samples = items[0].get("sampleImageURL", {}).get("large")
+    if isinstance(samples, list):
+        return samples
+    if isinstance(samples, str):
+        return [samples]
     return []
 
 # Upload image to WordPress
@@ -120,20 +129,13 @@ def create_wp_post(video: dict) -> bool:
     # Build content
     aff = make_affiliate_link(video["detail_url"])
     parts = []
-    # Featured
     parts.append(f'<p><a href="{aff}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
-    # Title
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
-    # Description
     if video.get("description"):
         parts.append(f'<div>{video["description"]}</div>')
-    # Remaining samples
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    # Final link
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
-    # Post tags: actress, label, genre from API detail
-    # (Optional: fetch via ItemDetail API if needed)
     post = WordPressPost()
     post.title = title
     post.content = "\n".join(parts)
