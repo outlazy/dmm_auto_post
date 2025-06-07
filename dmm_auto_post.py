@@ -63,7 +63,7 @@ def make_affiliate_link(url: str) -> str:
 from requests.exceptions import HTTPError
 
 def fetch_latest_videos() -> list[dict]:
-    # 1) Get floorId for amateur service
+    # 1) Retrieve floorId for amateur videos
     fl_url = "https://api.dmm.com/affiliate/v3/floorList"
     fl_params = {
         "api_id":       API_ID,
@@ -77,36 +77,34 @@ def fetch_latest_videos() -> list[dict]:
         fl_resp.raise_for_status()
         floors = fl_resp.json().get("result", {}).get("floor", [])
         floor_id = floors[0].get("floorId") if floors else None
-    except HTTPError as e:
+    except Exception as e:
         print(f"DEBUG: floorList API failed: {e}")
         return []
-
     if not floor_id:
         print("DEBUG: No floorId found for amateur service")
         return []
-
-    # 2) Fetch ItemList with floorId
+    # 2) List items using that floorId
+    il_url = ITEM_LIST_URL
     il_params = {
         "api_id":       API_ID,
         "affiliate_id": AFF_ID,
         "site":         "video",
         "service":      "amateur",
         "floorId":      floor_id,
-        "hits":         LIST_PARAMS.get("hits", 10),
+        "hits":         LIST_PARAMS.get("hits", 20),
         "sort":         LIST_PARAMS.get("sort", "date"),
-        "output":       "json",
+        "output":       LIST_PARAMS.get("output", "json"),
     }
     try:
-        il_resp = requests.get(ITEM_LIST_URL, params=il_params, timeout=10)
+        il_resp = requests.get(il_url, params=il_params, timeout=10)
         il_resp.raise_for_status()
         items = il_resp.json().get("result", {}).get("items", [])
-    except HTTPError as e:
+    except Exception as e:
         print(f"DEBUG: ItemList API failed: {e}")
         return []
-
+    # 3) Filter by genre and limit
     videos = []
     for item in items:
-        # filter by genreId to ensure "8503"
         genres = item.get("genre", [])
         if not any(g.get("genreId") == GENRE_TARGET_ID for g in genres):
             continue
