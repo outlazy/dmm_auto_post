@@ -115,7 +115,10 @@ def fetch_listed_videos(limit: int):
 
             # 3) Fallback: extract any /detail/ links via regex
     session = get_session()
+    session = get_session()
     html = get_page_html(session, LIST_URL)
+    # DEBUG: print first 500 characters of HTML to diagnose link patterns
+    print("DEBUG HTML SNIPPET:", html[:500])
     seen = set()
     videos = []
     # regex to find any URL path containing /detail/
