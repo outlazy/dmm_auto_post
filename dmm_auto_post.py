@@ -7,7 +7,6 @@ import collections.abc
 collections.Iterable = collections.abc.Iterable
 
 import os
-import re
 import time
 import requests
 from bs4 import BeautifulSoup
@@ -26,6 +25,7 @@ WP_URL     = os.getenv("WP_URL")
 WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
+DMM_API_ID = os.getenv("DMM_API_ID")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
 MAX_ITEMS  = 10  # Number of videos to fetch
@@ -50,34 +50,7 @@ def get_session() -> requests.Session:
     # Bypass age-check cookies
     s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
     s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
-    # Bypass DMM age verification forms
-    for url, data in [
-        ("https://www.dmm.co.jp/my/-/service/=/security_age/", {"adult": "ok"}),
-        ("https://www.dmm.co.jp/my/-/service/=/security_check/", {"adult": "ok"})
-    ]:
-        try:
-            s.post(url, data=data, timeout=5)
-        except:
-            pass
     return s
-
-def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
-    resp = session.get(url, timeout=10)
-    if any(indicator in resp.url for indicator in ("age_check", "security_check")) or "I Agree" in resp.text:
-        soup = BeautifulSoup(resp.text, "html.parser")
-        # Try English link
-        agree = soup.find("a", string=re.compile(r"I Agree", re.I))
-        if agree and agree.get("href"):
-            session.get(agree["href"], timeout=10)
-        else:
-            form = soup.find("form")
-            if form and form.get("action"):
-                action = form["action"]
-                data = {inp.get("name"): inp.get("value", "ok") or "ok" for inp in form.find_all("input", attrs={"name": True})}
-                session.post(action, data=data, timeout=10)
-        resp = session.get(url, timeout=10)
-    resp.raise_for_status()
-    return resp
 
 def abs_url(href: str) -> str:
     if href.startswith("//"):
@@ -87,44 +60,48 @@ def abs_url(href: str) -> str:
     return href
 
 # ───────────────────────────────────────────────────────────
-# Fetch latest videos list
+# Fetch latest videos list via DMM Affiliate API
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
-    """
-    Fetch latest amateur videos via HTML regex first, then fallback to li.list-box scraping.
-    """
+    if not DMM_API_ID:
+        raise RuntimeError("Missing environment variable: DMM_API_ID for Affiliate API")
+
+    # API parameters (FANZA Digital Videoa)
+    params = {
+        "api_id":       DMM_API_ID,
+        "affiliate_id": AFF_ID,
+        "site":         "FANZA",
+        "service":      "digital",
+        "floor":        "videoa",
+        "hits":         limit,
+        "sort":         "date",
+        "output":       "json",
+    }
+    api_url = "https://api.dmm.com/affiliate/v3/ItemList"
+    try:
+        resp = requests.get(api_url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("result", {}).get("items", [])
+        videos = [{"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")} for itm in items]
+        print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
+        return videos
+    except Exception as e:
+        print(f"DEBUG: DMM API fetch failed ({e}), falling back to HTML scraping")
+
+    # Fallback HTML scraping
     session = get_session()
     resp = session.get(LIST_URL, timeout=10)
-    html = resp.text
+    soup = BeautifulSoup(resp.text, "html.parser")
     videos = []
-    seen = set()
-
-    # 1) Regex: extract absolute and relative detail links
-    abs_links = re.findall(r'href=["\'](https?://video\.dmm\.co\.jp/amateur/detail/[^"\']+)["\']', html)
-    rel_links = re.findall(r'href=["\'](/amateur/detail/[^"\']+)["\']', html)
-    for path in abs_links + rel_links:
-        url = path if path.startswith("http") else abs_url(path)
-        if url in seen:
+    for li in soup.select("li.list-box")[:limit]:
+        a = li.find("a", class_="tmb")
+        if not a or not a.get("href"):
             continue
-        seen.add(url)
-        videos.append({"title": None, "detail_url": url})
-        if len(videos) >= limit:
-            break
-
-    # 2) Fallback: <li class="list-box"> scraping
-    if not videos:
-        soup = BeautifulSoup(html, "html.parser")
-        for li in soup.select("li.list-box")[:limit]:
-            a = li.find("a", class_="tmb")
-            if not a or not a.get("href"):
-                continue
-            url = abs_url(a["href"])
-            title = a.img.get("alt").strip() if a.img and a.img.get("alt") else a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title")
-            if url in seen:
-                continue
-            seen.add(url)
-            videos.append({"title": title, "detail_url": url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
+        url = abs_url(a["href"])
+        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or li.find("p", class_="title").get_text(strip=True)
+        videos.append({"title": title, "detail_url": url})
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping")
     return videos
 
 # ───────────────────────────────────────────────────────────
@@ -132,17 +109,15 @@ def fetch_listed_videos(limit: int):
 # ───────────────────────────────────────────────────────────
 def scrape_detail(url: str):
     session = get_session()
-    resp = fetch_with_age_check(session, url)
+    resp = session.get(url, timeout=10)
+    resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
-
     # Title
     h1 = soup.find("h1")
     title = h1.get_text(strip=True) if h1 else (soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title")
-
     # Description
-    d = soup.find(lambda tag: tag.name in ["div","p"] and (tag.get("class") == ["mg-b20","lh4"] or tag.get("id") == "sample-description"))
+    d = soup.find("div", class_="mg-b20 lh4") or soup.find("p", id="sample-description")
     desc = d.get_text(" ", strip=True) if d else ""
-
     # Sample images
     imgs = []
     for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img"):  
@@ -176,14 +151,12 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str) -> b
     if any(p.title == title for p in existing):
         print(f"→ Skipping duplicate: {title}")
         return False
-
     thumb_id = None
     if imgs:
         try:
             thumb_id = upload_image(wp, imgs[0])
         except Exception as e:
             print(f"Thumbnail upload failed: {e}")
-
     aff = make_affiliate_link(detail_url)
     parts = []
     if imgs:
@@ -195,7 +168,6 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str) -> b
     if imgs:
         parts.append(f'<p><a href="{aff}" target="_blank"><img src="{imgs[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
-
     post = WordPressPost()
     post.title       = title
     post.content     = "\n".join(parts)
