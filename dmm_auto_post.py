@@ -73,15 +73,29 @@ def fetch_listed_videos(limit: int):
     soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
-    for a in soup.select("a.tmb"):
-        href = a.get("href")
-        if not href:
+    # li.list-box 内の a.tmb を取得（新着順）
+    for li in soup.select("li.list-box"):  
+        a = li.find("a", class_="tmb")
+        if not a or not a.get("href"):
             continue
+        href = a.get("href")
         url = abs_url(href)
-        title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True)
+        # タイトルは title 属性または画像 alt または p.title
+        title = a.get("title") or (li.find("p", class_="title") and li.find("p", class_="title").get_text(strip=True)) or (a.img and a.img.get("alt")) or "No Title"
         videos.append({"title": title, "detail_url": url})
         if len(videos) >= limit:
             break
+    # フォールバック: a.tmb 全件取得
+    if not videos:
+        for a in soup.select("a.tmb"):
+            href = a.get("href")
+            if not href:
+                continue
+            url = abs_url(href)
+            title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True) or "No Title"
+            videos.append({"title": title, "detail_url": url})
+            if len(videos) >= limit:
+                break
     return videos
 
 # ───────────────────────────────────────────────────────────
