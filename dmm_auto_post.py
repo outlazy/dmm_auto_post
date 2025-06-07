@@ -88,38 +88,36 @@ def abs_url(href: str) -> str:
 # ───────────────────────────────────────────────────────────
 # 一覧ページから動画URL取得
 # ───────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────────────────
+# DMM アフィリエイト API で新着動画を取得
+# ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
-    session = get_session()
-    resp = fetch_with_age_check(session, LIST_URL)
-    html = resp.text
-    # 正規表現で/amateur/detail/以下のURLを抽出
-        # 正規表現で/amateur/.../detail/...へのリンクを抽出
-    # 相対パスと絶対URLの両方に対応
-    pattern = r'href=["\'](?:https?://video\.dmm\.co\.jp)?(/amateur/[^"\']*?detail/[^"\']+)["\']'
-    paths = re.findall(pattern, html)
-    # 絶対URL付きのパターンも
-    abs_pattern = r'href=["\'](https?://video\.dmm\.co\.jp/amateur/[^"\']*?detail/[^"\']+)["\']'
-    abs_paths = re.findall(abs_pattern, html)
-    seen = set()
+    """
+    DMM アフィリエイトAPIを使用して、新着順で動画の一覧をJSONで取得します。
+    要求には環境変数 DMM_API_ID を api_id として、site=video, service=amateur, sort=date, hits=limit を指定します。
+    """
+    api_id = os.getenv("DMM_API_ID") or os.getenv("DMM_AFFILIATE_ID")
+    if not api_id:
+        raise RuntimeError("Missing DMM_API_ID environment variable for API calls.")
+    params = {
+        "api_id": api_id,
+        "affiliate_id": AFF_ID,
+        "site": "video",
+        "service": "amateur",
+        "sort": "date",
+        "hits": limit,
+        "output": "json"
+    }
+    url = "https://api.dmm.com/affiliate/v3/ItemList"
+    resp = requests.get(url, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
     videos = []
-    # 相対パスを絶対化
-    for path in paths:
-        url = abs_url(path)
-        if url in seen:
-            continue
-        seen.add(url)
-        videos.append({"detail_url": url})
-        if len(videos) >= MAX_ITEMS:
-            break
-    # 絶対URLパターンを追加
-    for url in abs_paths:
-        if url in seen:
-            continue
-        seen.add(url)
-        videos.append({"detail_url": url})
-        if len(videos) >= MAX_ITEMS:
-            break
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
+    for item in data.get("result", {}).get("items", []):
+        detail_url = item.get("URL")
+        title = item.get("title")
+        videos.append({"title": title, "detail_url": detail_url})
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
     return videos
 
 # ───────────────────────────────────────────────────────────
