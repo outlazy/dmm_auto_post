@@ -60,8 +60,9 @@ def fetch_latest_videos():
         print(f"DEBUG: API request failed: {e}")
         return []
     data = resp.json()
+        data = resp.json()
     items = data.get("result", {}).get("items", [])
-        videos = []
+    videos = []
     for item in items:
         # collect API image as fallback
         api_img = None
