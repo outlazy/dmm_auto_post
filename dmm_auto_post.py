@@ -112,18 +112,20 @@ def fetch_listed_videos(limit: int):
             except:
                 pass
 
-    # Fallback HTML scraping
-    session = get_session()
+        # 3) Fallback: extract detail URLs via regex
     html = get_page_html(session, LIST_URL)
-    soup = BeautifulSoup(html, "html.parser")
+    seen = set()
     videos = []
-    for li in soup.select("li.list-box")[:limit]:
-        a = li.find("a", class_="tmb")
-        if not a or not a.get("href"): continue
-        url = abs_url(a["href"])
-        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title")
-        videos.append({"title": title, "detail_url": url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping")
+    # regex to find /amateur/detail/... links
+    for match in re.findall(r'href="(/amateur/detail/[^"]+?)"', html):
+        url = abs_url(match)
+        if url in seen:
+            continue
+        seen.add(url)
+        videos.append({"title": None, "detail_url": url})
+        if len(videos) >= limit:
+            break
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via regex fallback")
     return videos
 
 # ───────────────────────────────────────────────────────────
