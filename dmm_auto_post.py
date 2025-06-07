@@ -25,12 +25,12 @@ for name, val in [("WP_URL", WP_URL), ("WP_USER", WP_USER), ("WP_PASS", WP_PASS)
         raise RuntimeError(f"Missing environment variable: {name}")
 
 API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
-LIST_PARAMS = {
+# Initial API parameters for itemList; floorId will be added later
+early_LIST_PARAMS = {
     "api_id": DMM_API_ID,
     "affiliate_id": AFF_ID,
     "site": "video",
     "service": "amateur",
-    "genre_id": "8503",
     "hits": 1,
     "sort": "date",
     "output": "json",
