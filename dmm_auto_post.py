@@ -26,13 +26,15 @@ for name, val in [("WP_URL", WP_URL), ("WP_USER", WP_USER), ("WP_PASS", WP_PASS)
 
 # Affiliate API endpoint and parameters for latest amateur videos (genre 8503)
 API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
+# Affiliate API endpoint and parameters for latest amateur videos (genre 8503)
+API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
 ITEM_PARAMS = {
     "api_id":       DMM_API_ID,
     "affiliate_id": AFF_ID,
     "site":         "FANZA",
     "service":      "digital",
     "genre_id":     "8503",  # amateur gyaru
-    "hits":         1,
+    "hits":         10,       # fetch up to 10 items
     "sort":         "date",
     "output":       "json",
 }
