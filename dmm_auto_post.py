@@ -8,7 +8,6 @@ collections.Iterable = collections.abc.Iterable
 
 import os
 import time
-import re
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -19,6 +18,69 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # ───────────────────────────────────────────────────────────
+# 環境変数読み込み
+# ───────────────────────────────────────────────────────────
+load_dotenv()
+WP_URL     = os.getenv("WP_URL")
+WP_USER    = os.getenv("WP_USER")
+WP_PASS    = os.getenv("WP_PASS")
+AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
+MAX_ITEMS  = 10  # 一覧取得数
+
+# 必須環境変数チェック
+for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
+    if not v:
+        raise RuntimeError(f"Missing environment variable: {name}")
+
+# ───────────────────────────────────────────────────────────
+# affiliate_id 付与
+# ───────────────────────────────────────────────────────────
+def make_affiliate_link(url: str) -> str:
+    p  = urlparse(url)
+    qs = dict(parse_qsl(p.query))
+    qs["affiliate_id"] = AFF_ID
+    return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(qs), p.fragment))
+
+# ───────────────────────────────────────────────────────────
+# セッション取得 & age-check bypass
+# ───────────────────────────────────────────────────────────
+def get_session():
+    s = requests.Session()
+    s.headers.update({"User-Agent": USER_AGENT})
+    # 成人確認バイパス用 Cookie
+    s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
+    s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
+    return s
+
+# ───────────────────────────────────────────────────────────
+# Age check フォーム自動送信
+# ───────────────────────────────────────────────────────────
+def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
+    resp = session.get(url, timeout=10)
+    if "age_check" in resp.url or "I Agree" in resp.text:
+        soup = BeautifulSoup(resp.text, "html.parser")
+        form = soup.find("form")
+        if form and form.get("action"):
+            action = form["action"]
+            data = {inp["name"]: inp.get("value", "ok") or "ok" for inp in form.find_all("input", attrs={"name": True})}
+            session.post(action, data=data, timeout=10)
+            resp = session.get(url, timeout=10)
+    resp.raise_for_status()
+    return resp
+
+# ───────────────────────────────────────────────────────────
+# 絶対URL 変換
+# ───────────────────────────────────────────────────────────
+def abs_url(href: str) -> str:
+    if href.startswith("//"):
+        return f"https:{href}"
+    if href.startswith("/"):
+        return f"https://video.dmm.co.jp{href}"
+    return href
+
+# ───────────────────────────────────────────────────────────
 # 一覧ページから動画URLとタイトル取得
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
@@ -27,20 +89,17 @@ def fetch_listed_videos(limit: int):
     soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
-    # detail ページへのリンクを全検索
+    # detailed page link extraction
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        # 詳細ページへのリンク判定
         if "/amateur/" in href and "/detail/" in href:
             url = abs_url(href)
             title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True) or "No Title"
-            # 重複防止
             if not any(v["detail_url"] == url for v in videos):
                 videos.append({"title": title, "detail_url": url})
         if len(videos) >= limit:
             break
 
-    # デバッグ: 取得件数
     print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
     return videos
 
@@ -52,22 +111,31 @@ def scrape_detail(url: str):
     resp = fetch_with_age_check(session, url)
     soup = BeautifulSoup(resp.text, "html.parser")
 
+    # title
     h1 = soup.find("h1")
-    title = h1.get_text(strip=True) if h1 else (soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title")
+    if h1:
+        title = h1.get_text(strip=True)
+    else:
+        og = soup.find("meta", property="og:title")
+        title = og["content"].strip() if og and og.get("content") else "No Title"
 
-    d = soup.find(lambda tag: tag.name in ["div","p"] and (tag.get("class") == ["mg-b20","lh4"] or tag.get("id") == "sample-description"))
+    # description
+    d = soup.find(lambda tag: tag.name in ["div","p"] and ((tag.get("class") == ["mg-b20","lh4"]) or tag.get("id") == "sample-description"))
     desc = d.get_text(" ", strip=True) if d else ""
 
+    # sample images
     imgs = []
-    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img", "figure img"):  
+    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img", "figure img"):
         for img in soup.select(sel):
             src = img.get("data-original") or img.get("src")
             if src and src not in imgs:
                 imgs.append(src)
         if imgs:
             break
-    if not imgs and soup.find("meta", property="og:image"):
-        imgs.append(soup.find("meta", property="og:image")["content"].strip())
+    if not imgs:
+        og_img = soup.find("meta", property="og:image")
+        if og_img and og_img.get("content"):
+            imgs.append(og_img["content"].strip())
 
     print(f"DEBUG: scrape_detail for {url} yielded {len(imgs)} images")
     return title, desc, imgs
@@ -85,7 +153,7 @@ def upload_image(wp: Client, url: str) -> int:
 # ───────────────────────────────────────────────────────────
 # Wordpress 投稿作成
 # ───────────────────────────────────────────────────────────
-def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
+def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str) -> bool:
     wp = Client(WP_URL, WP_USER, WP_PASS)
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if any(p.title == title for p in existing):
@@ -112,8 +180,8 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
 
     post = WordPressPost()
-    post.title       = title
-    post.content     = "\n".join(parts)
+    post.title = title
+    post.content = "\n".join(parts)
     if thumb_id:
         post.thumbnail = thumb_id
     post.terms_names = {"category": ["DMM動画"], "post_tag": []}
