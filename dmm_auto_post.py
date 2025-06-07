@@ -19,68 +19,6 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # ───────────────────────────────────────────────────────────
-# 環境変数読み込み
-# ───────────────────────────────────────────────────────────
-load_dotenv()
-WP_URL     = os.getenv("WP_URL")
-WP_USER    = os.getenv("WP_USER")
-WP_PASS    = os.getenv("WP_PASS")
-AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
-MAX_ITEMS  = 10  # 一覧取得数
-
-# 必須環境変数チェック
-for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
-    if not v:
-        raise RuntimeError(f"Missing environment variable: {name}")
-
-# ───────────────────────────────────────────────────────────
-# affiliate_id 付与
-# ───────────────────────────────────────────────────────────
-def make_affiliate_link(url: str) -> str:
-    p  = urlparse(url)
-    qs = dict(parse_qsl(p.query))
-    qs["affiliate_id"] = AFF_ID
-    return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(qs), p.fragment))
-
-# ───────────────────────────────────────────────────────────
-# セッション取得 & age-check bypass
-# ───────────────────────────────────────────────────────────
-def get_session():
-    s = requests.Session()
-    s.headers.update({"User-Agent": USER_AGENT})
-    s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
-    s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
-    return s
-
-# ───────────────────────────────────────────────────────────
-# Age check フォーム自動送信
-# ───────────────────────────────────────────────────────────
-def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
-    resp = session.get(url, timeout=10)
-    if "age_check" in resp.url or "I Agree" in resp.text:
-        soup = BeautifulSoup(resp.text, "html.parser")
-        form = soup.find("form")
-        if form and form.get("action"):
-            action = form["action"]
-            data = {inp["name"]: inp.get("value", "ok") or "ok" for inp in form.find_all("input", attrs={"name": True})}
-            session.post(action, data=data, timeout=10)
-            resp = session.get(url, timeout=10)
-    resp.raise_for_status()
-    return resp
-
-# ───────────────────────────────────────────────────────────
-# 絶対URL 変換
-# ───────────────────────────────────────────────────────────
-def abs_url(href: str) -> str:
-    if href.startswith("//"):
-        return f"https:{href}"
-    if href.startswith("/"):
-        return f"https://video.dmm.co.jp{href}"
-    return href
-
-# ───────────────────────────────────────────────────────────
 # 一覧ページから動画URLとタイトル取得
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
@@ -89,27 +27,18 @@ def fetch_listed_videos(limit: int):
     soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
-    # 新着順リスト: li.list-box 内の a.tmb を優先取得
-    for li in soup.select("li.list-box"):  
-        a = li.find("a", class_="tmb")
-        if a and a.get("href"):
-            href = a["href"]
-            videos.append({
-                "title": a.get("title") or (li.find("p", class_="title") and li.find("p", class_="title").get_text(strip=True)) or "No Title",
-                "detail_url": abs_url(href)
-            })
+    # detail ページへのリンクを全検索
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        # 詳細ページへのリンク判定
+        if "/amateur/" in href and "/detail/" in href:
+            url = abs_url(href)
+            title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True) or "No Title"
+            # 重複防止
+            if not any(v["detail_url"] == url for v in videos):
+                videos.append({"title": title, "detail_url": url})
         if len(videos) >= limit:
             break
-
-    # フォールバック: 汎用的に /amateur/ を含むリンクから取得
-    if not videos:
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if "/amateur/" in href:
-                title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True) or "No Title"
-                videos.append({"title": title, "detail_url": abs_url(href)})
-                if len(videos) >= limit:
-                    break
 
     # デバッグ: 取得件数
     print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
