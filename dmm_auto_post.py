@@ -126,22 +126,6 @@ def fetch_listed_videos(limit: int):
             videos.append({"title": title, "detail_url": url})
     print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
     return videos
-        except Exception as e:
-            print(f"DEBUG: DMM API fetch failed: {e}, falling back to HTML scraping")
-
-    session = get_session()
-    resp = fetch_with_age_check(session, LIST_URL)
-    soup = BeautifulSoup(resp.text, "html.parser")
-    videos = []
-    for li in soup.select("li.list-box")[:limit]:
-        a = li.find("a", class_="tmb")
-        if not a or not a.get("href"):
-            continue
-        url = abs_url(a.get("href"))
-        title = a.img.get("alt").strip() if a.img and a.img.get("alt") else a.get("title") or li.find("p", class_="title").get_text(strip=True)
-        videos.append({"title": title, "detail_url": url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping")
-    return videos
 
 # ───────────────────────────────────────────────────────────
 # Scrape detail page
