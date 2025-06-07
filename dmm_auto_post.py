@@ -83,12 +83,8 @@ def fetch_listed_videos(limit: int):
         fl_resp.raise_for_status()
         fl_data = fl_resp.json()
         floor_items = fl_data.get("result", {}).get("floor", [])
-        # Prefer floor named "Amateur" or use first
-        floor_id = None
-        for f in floor_items:
-            if f.get("serviceName") == "Amateur" or f.get("floorId"):
-                floor_id = f.get("floorId")
-                break
+        # Use first available floorId
+        floor_id = floor_items[0].get("floorId") if floor_items else None
     except Exception as e:
         print(f"DEBUG: floorList API failed ({e}), falling back to HTML scraping")
         floor_id = None
@@ -112,9 +108,26 @@ def fetch_listed_videos(limit: int):
             il_resp.raise_for_status()
             il_data = il_resp.json()
             items = il_data.get("result", {}).get("items", [])
-            videos = [{"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")} for itm in items]
+            for itm in items:
+                videos.append({"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")})
             print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
             return videos
+        except Exception as e:
+            print(f"DEBUG: ItemList API failed ({e}), falling back to HTML scraping")
+
+    # 3) Fallback HTML scraping
+    session = get_session()
+    resp = session.get(LIST_URL, timeout=10)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for li in soup.select("li.list-box")[:limit]:
+        a = li.find("a", class_="tmb")
+        if not a or not a.get("href"):
+            continue
+        url = abs_url(a["href"])
+        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title")
+        videos.append({"title": title, "detail_url": url})
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping from {LIST_URL}")
+    return videos
         except Exception as e:
             print(f"DEBUG: ItemList API failed ({e}), falling back to HTML scraping")
 
