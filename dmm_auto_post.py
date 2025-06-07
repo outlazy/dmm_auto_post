@@ -45,23 +45,47 @@ def make_affiliate_link(url: str) -> str:
     new_query = urlencode(params)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
-# Fetch latest video via API
+# Fetch latest video via API using floorList then ItemList
 def fetch_latest_video():
-    resp = requests.get(API_URL, params=LIST_PARAMS, timeout=10)
-    resp.raise_for_status()
-    data = resp.json().get("result", {}).get("items", [])
-    if not data:
+    # 1) Retrieve floorId for amateur videos
+    fl_url = "https://api.dmm.com/affiliate/v3/floorList"
+    fl_params = early_LIST_PARAMS.copy()
+    # Remove hits and sort for floorList
+    fl_params.pop("hits", None)
+    fl_params.pop("sort", None)
+    try:
+        fl = requests.get(fl_url, params=fl_params, timeout=10)
+        fl.raise_for_status()
+        floors = fl.json().get("result", {}).get("floor", [])
+        floor_id = floors[0].get("floorId") if floors else None
+    except Exception as e:
+        raise RuntimeError(f"floorList API failed: {e}")
+
+    if not floor_id:
         return None
-    item = data[0]
-    return {
-        "title": item.get("title", "No Title"),
-        "detail_url": item.get("URL"),
-        "description": item.get("description", ""),
-        "images": [thumb.get("URL") for thumb in item.get("imageURL", {}).get("large", [])] or [item.get("imageURL", {}).get("large")],
-    }
+
+    # 2) Fetch latest video via ItemList API
+    il_url = API_URL
+    il_params = early_LIST_PARAMS.copy()
+    il_params["floorId"] = floor_id
+    try:
+        il = requests.get(il_url, params=il_params, timeout=10)
+        il.raise_for_status()
+        items = il.json().get("result", {}).get("items", [])
+        if not items:
+            return None
+        item = items[0]
+        return {
+            "title": item.get("title", "No Title"),
+            "detail_url": item.get("URL"),
+            "description": item.get("description", ""),
+            "images": [item.get("imageURL", {}).get("large")] if item.get("imageURL") else [],
+        }
+    except Exception as e:
+        raise RuntimeError(f"ItemList API failed: {e}")
 
 # Upload image to WP
-def upload_image(wp: Client, url: str) -> int:
+def upload_image(wp: Client, url: str) -> int:(wp: Client, url: str) -> int:
     data = requests.get(url).content
     name = os.path.basename(urlparse(url).path)
     media_data = {"name": name, "type": "image/jpeg", "bits": xmlrpc_client.Binary(data)}
