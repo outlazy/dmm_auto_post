@@ -19,103 +19,24 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # ───────────────────────────────────────────────────────────
-# 環境変数読み込み
-# ───────────────────────────────────────────────────────────
-load_dotenv()
-WP_URL     = os.getenv("WP_URL")
-WP_USER    = os.getenv("WP_USER")
-WP_PASS    = os.getenv("WP_PASS")
-AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
-MAX_ITEMS  = 10  # 一覧取得数
-
-# 必須環境変数チェック
-for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
-    if not v:
-        raise RuntimeError(f"Missing environment variable: {name}")
-
-# ───────────────────────────────────────────────────────────
-# affiliate_id 付与
-# ───────────────────────────────────────────────────────────
-def make_affiliate_link(url: str) -> str:
-    p  = urlparse(url)
-    qs = dict(parse_qsl(p.query))
-    qs["affiliate_id"] = AFF_ID
-    return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(qs), p.fragment))
-
-# ───────────────────────────────────────────────────────────
-# セッション取得 & age-check bypass
-# ───────────────────────────────────────────────────────────
-def get_session():
-    s = requests.Session()
-    s.headers.update({"User-Agent": USER_AGENT})
-    # 成人確認バイパス用 Cookie
-    s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
-    s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
-    return s
-
-# ───────────────────────────────────────────────────────────
-# Age check フォーム自動送信
-# ───────────────────────────────────────────────────────────
-def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
-    resp = session.get(url, timeout=10)
-    if "age_check" in resp.url or "security_check" in resp.url or "I Agree" in resp.text:
-        soup = BeautifulSoup(resp.text, "html.parser")
-        agree = soup.find("a", string=re.compile(r"I Agree", re.I))
-        if agree and agree.get("href"):
-            session.get(agree["href"], timeout=10)
-        else:
-            form = soup.find("form")
-            if form and form.get("action"):
-                action = form["action"]
-                data = {inp.get("name"): inp.get("value", "ok") or "ok" for inp in form.find_all("input", attrs={"name": True})}
-                session.post(action, data=data, timeout=10)
-        resp = session.get(url, timeout=10)
-    resp.raise_for_status()
-    return resp
-
-# ───────────────────────────────────────────────────────────
-# 絶対URL 変換
-# ───────────────────────────────────────────────────────────
-def abs_url(href: str) -> str:
-    if href.startswith("//"):
-        return f"https:{href}"
-    if href.startswith("/"):
-        return f"https://video.dmm.co.jp{href}"
-    return href
-
-# ───────────────────────────────────────────────────────────
-# 一覧ページから動画URLとタイトル取得
+# 一覧ページから動画URL取得（正規表現ベース）
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
     session = get_session()
     resp = fetch_with_age_check(session, LIST_URL)
-    soup = BeautifulSoup(resp.text, "html.parser")
-
+    html = resp.text
+    # /amateur/detail/ へのリンクを正規表現で抽出
+    paths = re.findall(r'href=["\'](/amateur/detail/[^"\']+)', html)
+    seen = set()
     videos = []
-    # li.list-box から新着順にリンクを取得
-    for li in soup.select("li.list-box"):  
-        a = li.find("a", class_="tmb")
-        href = a.get("href") if a else None
-        if href:
-            url = abs_url(href)
-            title = a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else None) or (a.img.get("alt") if a.img else None) or "No Title"
-            if not any(v["detail_url"] == url for v in videos):
-                videos.append({"title": title, "detail_url": url})
+    for path in paths:
+        url = abs_url(path)
+        if url in seen:
+            continue
+        seen.add(url)
+        videos.append({"detail_url": url})
         if len(videos) >= limit:
             break
-    # フォールバック: detailページリンクを正規表現で取得
-    if not videos:
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if re.search(r"/amateur/detail", href):
-                url = abs_url(href)
-                title = a.get("title") or (a.img.get("alt") if a.img else None) or a.get_text(strip=True) or "No Title"
-                if not any(v["detail_url"] == url for v in videos):
-                    videos.append({"title": title, "detail_url": url})
-            if len(videos) >= limit:
-                break
     print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
     return videos
 
