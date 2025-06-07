@@ -31,6 +31,17 @@ def get_page_html(session: requests.Session, url: str) -> str:
     return resp.text
 
 # ───────────────────────────────────────────────────────────
+def get_page_html(session: requests.Session, url: str) -> str:
+    resp = session.get(url, timeout=10)
+    if "/age_check" in resp.url or "/security_check" in resp.url or "I Agree" in resp.text:
+        soup = BeautifulSoup(resp.text, "html.parser")
+        agree = soup.find("a", string=lambda t: t and "I Agree" in t)
+        if agree and agree.get("href"):
+            resp = session.get(agree["href"], timeout=10)
+    resp.raise_for_status()
+    return resp.text
+
+# ───────────────────────────────────────────────────────────
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
 WP_USER    = os.getenv("WP_USER")
