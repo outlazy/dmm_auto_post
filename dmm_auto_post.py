@@ -85,7 +85,7 @@ def fetch_latest_video():
         raise RuntimeError(f"ItemList API failed: {e}")
 
 # Upload image to WP
-def upload_image(wp: Client, url: str) -> int:(wp: Client, url: str) -> int:
+def upload_image(wp: Client, url: str) -> int:
     data = requests.get(url).content
     name = os.path.basename(urlparse(url).path)
     media_data = {"name": name, "type": "image/jpeg", "bits": xmlrpc_client.Binary(data)}
