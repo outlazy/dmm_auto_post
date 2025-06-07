@@ -101,6 +101,27 @@ def fetch_listed_videos(limit: int):
         print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
         return videos
     except Exception as e:
+        print(f"DEBUG: DMM Affiliate API fetch failed: {e}, falling back to HTML scraping")
+
+    # 3) Fallback: extract any /detail/ links via regex
+    session = get_session()
+    html = get_page_html(session, LIST_URL)
+    # DEBUG: print first 500 characters of HTML to diagnose link patterns
+    print("DEBUG HTML SNIPPET:", html[:500])
+    seen = set()
+    videos = []
+    # regex to find any URL path containing /detail/
+    for match in re.findall(r'href=["\']([^"\']*/detail/[^"\']+)["\']', html):
+        url = abs_url(match)
+        if url in seen:
+            continue
+        seen.add(url)
+        videos.append({"title": None, "detail_url": url})
+        if len(videos) >= limit:
+            break
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via regex fallback")
+    return videos
+    except Exception as e:
         raise RuntimeError(f"DMM Affiliate API fetch failed: {e}")
             except:
                 pass
