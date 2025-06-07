@@ -24,65 +24,42 @@ for name, val in [("WP_URL", WP_URL), ("WP_USER", WP_USER), ("WP_PASS", WP_PASS)
     if not val:
         raise RuntimeError(f"Missing environment variable: {name}")
 
+# Affiliate API endpoint and parameters for latest amateur videos (genre 8503)
 API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
-# Initial API parameters for itemList; floorId will be added later
-early_LIST_PARAMS = {
-    "api_id": DMM_API_ID,
+ITEM_PARAMS = {
+    "api_id":       DMM_API_ID,
     "affiliate_id": AFF_ID,
-    "site": "video",
-    "service": "amateur",
-    "hits": 1,
-    "sort": "date",
-    "output": "json",
+    "site":         "FANZA",
+    "service":      "digital",
+    "genre_id":     "8503",  # amateur gyaru
+    "hits":         1,
+    "sort":         "date",
+    "output":       "json",
 }
 
 # Build affiliate link
 def make_affiliate_link(url: str) -> str:
-    parts = list(parse_qsl(urlparse(url).query))
-    params = dict(parts)
-    params["affiliate_id"] = AFF_ID
     parsed = urlparse(url)
-    new_query = urlencode(params)
+    qs = dict(parse_qsl(parsed.query))
+    qs["affiliate_id"] = AFF_ID
+    new_query = urlencode(qs)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
-# Fetch latest video via API using floorList then ItemList
+# Fetch latest video via ItemList API
 def fetch_latest_video():
-    # 1) Retrieve floorId for amateur videos
-    fl_url = "https://api.dmm.com/affiliate/v3/floorList"
-    fl_params = early_LIST_PARAMS.copy()
-    # Remove hits and sort for floorList
-    fl_params.pop("hits", None)
-    fl_params.pop("sort", None)
-    try:
-        fl = requests.get(fl_url, params=fl_params, timeout=10)
-        fl.raise_for_status()
-        floors = fl.json().get("result", {}).get("floor", [])
-        floor_id = floors[0].get("floorId") if floors else None
-    except Exception as e:
-        raise RuntimeError(f"floorList API failed: {e}")
-
-    if not floor_id:
+    resp = requests.get(API_URL, params=ITEM_PARAMS, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    items = data.get("result", {}).get("items", [])
+    if not items:
         return None
-
-    # 2) Fetch latest video via ItemList API
-    il_url = API_URL
-    il_params = early_LIST_PARAMS.copy()
-    il_params["floorId"] = floor_id
-    try:
-        il = requests.get(il_url, params=il_params, timeout=10)
-        il.raise_for_status()
-        items = il.json().get("result", {}).get("items", [])
-        if not items:
-            return None
-        item = items[0]
-        return {
-            "title": item.get("title", "No Title"),
-            "detail_url": item.get("URL"),
-            "description": item.get("description", ""),
-            "images": [item.get("imageURL", {}).get("large")] if item.get("imageURL") else [],
-        }
-    except Exception as e:
-        raise RuntimeError(f"ItemList API failed: {e}")
+    item = items[0]
+    return {
+        "title":       item.get("title", "No Title"),
+        "detail_url":  item.get("URL"),
+        "description": item.get("description", ""),
+        "images":      [item.get("imageURL", {}).get("large")] if item.get("imageURL") else [],
+    }
 
 # Upload image to WP
 def upload_image(wp: Client, url: str) -> int:
@@ -104,24 +81,23 @@ def create_wp_post(video):
 
     # Upload thumbnail
     thumb_id = None
-    if video["images"]:
+    if video["images"] and video["images"][0]:
         thumb_id = upload_image(wp, video["images"][0])
 
     # Build content
     aff_link = make_affiliate_link(video["detail_url"])
-    content = []
-    if video["images"]:
-        content.append(f'<p><a href="{aff_link}" target="_blank"><img src="{video["images"][0]}" alt="{title}"></a></p>')
-    content.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
+    parts = []
+    if thumb_id:
+        parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{video["images"][0]}" alt="{title}"></a></p>')
+    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     if video.get("description"):
-        content.append(f'<div>{video["description"]}</div>')
-    for img in video.get("images")[1:]:
-        content.append(f'<p><img src="{img}" alt="{title}"></p>')
-    content.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
+        parts.append(f'<div>{video["description"]}</div>')
+    # Additional images not available via API
+    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
 
     post = WordPressPost()
     post.title = title
-    post.content = "\n".join(content)
+    post.content = "\n".join(parts)
     if thumb_id:
         post.thumbnail = thumb_id
     post.terms_names = {"category": ["DMM動画"], "post_tag": []}
