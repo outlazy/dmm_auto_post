@@ -84,7 +84,7 @@ def fetch_latest_videos():
     print(f"DEBUG: API returned {len(videos)} items")
     return videos
 
-# Scrape detail page for sample images for sample images
+# Scrape detail page for sample images
 def scrape_detail_images(detail_url: str) -> list[str]:
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -108,10 +108,46 @@ def scrape_detail_images(detail_url: str) -> list[str]:
                 imgs.append(src)
         if imgs:
             break
+    # Fallback og:image
     if not imgs and soup.find("meta",property="og:image"):
         imgs.append(soup.find("meta",property="og:image")["content"].strip())
     print(f"DEBUG: scrape_detail_images found {len(imgs)} images for {detail_url}")
     return imgs
+
+# Fetch sample images via Affiliate ItemDetail API
+def fetch_sample_images_api(detail_url: str) -> list[str]:
+    # extract cid parameter
+    m = parse_qsl(urlparse(detail_url).query)
+    cid = dict(m).get("cid") or detail_url.rstrip("/").split("/")[-1]
+    params = {
+        "api_id":       DMM_API_ID,
+        "affiliate_id": AFF_ID,
+        "site":         "FANZA",
+        "service":      "digital",
+        "item":         cid,
+        "output":       "json",
+    }
+    url = "https://api.dmm.com/affiliate/v3/ItemDetail"
+    resp = requests.get(url, params=params, timeout=10)
+    try:
+        resp.raise_for_status()
+    except:
+        print(f"DEBUG: ItemDetail API failed for {cid}")
+        return []
+    data = resp.json().get("result",{}).get("items",[])
+    if not data:
+        return []
+    item = data[0]
+    # sampleImageURL may be list or single
+    samples = item.get("sampleImageURL", {}).get("large")
+    if isinstance(samples, list):
+        return samples
+    if isinstance(samples, str):
+        return [samples]
+    return []
+
+# Update create_wp_post to use API samples fallback
+
 
 # Upload image to WordPress
 def upload_image(wp: Client, url: str) -> int:
@@ -131,7 +167,12 @@ def create_wp_post(video):
         print(f"→ Skipping duplicate: {title}")
         return False
     # Scrape sample images
-    images = scrape_detail_images(video["detail_url"])
+        images = scrape_detail_images(video["detail_url"])
+    if not images:
+        # fallback to API sample images
+        api_imgs = fetch_sample_images_api(video["detail_url"])
+        if api_imgs:
+            images = api_imgs
     if not images:
         print(f"→ Skipping unreleased or no-sample item: {title}")
         return False
