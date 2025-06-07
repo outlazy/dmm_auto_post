@@ -92,7 +92,15 @@ def scrape_detail_images(detail_url: str) -> list[str]:
     html = session.get(detail_url, timeout=10).text
     soup = BeautifulSoup(html, "html.parser")
     imgs = []
-    selectors = ["div#sample-image-box img","img.sample-box__img","li.sample-box__item img","figure img"]
+    selectors = [
+        "div#sample-image-box img",
+        "img.sample-box__img",
+        "li.sample-box__item img",
+        "figure img",
+        "img.sample-box__thumb",
+        "div.sample-box img",
+        "div#sampleArea img",
+    ]
     for sel in selectors:
         for img in soup.select(sel):
             src = img.get("data-original") or img.get("src")
