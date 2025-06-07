@@ -167,9 +167,9 @@ def create_wp_post(video):
         print(f"→ Skipping duplicate: {title}")
         return False
     # Scrape sample images
-        images = scrape_detail_images(video["detail_url"])
+    images = scrape_detail_images(video["detail_url"])
+    # fallback to API sample images if necessary
     if not images:
-        # fallback to API sample images
         api_imgs = fetch_sample_images_api(video["detail_url"])
         if api_imgs:
             images = api_imgs
@@ -208,7 +208,8 @@ def create_wp_post(video):
     # Create post object
     post = WordPressPost()
     post.title = title
-    post.content = "\n".join(parts)
+    post.content = "
+".join(parts)
     post.thumbnail = thumb_id
     post.terms_names = {"category": ["DMM動画"], "post_tag": unique_tags}
     post.post_status = "publish"
