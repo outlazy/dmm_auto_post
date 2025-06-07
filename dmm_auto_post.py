@@ -18,7 +18,18 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # ───────────────────────────────────────────────────────────
-# Load environment variables & constants
+# Fetch HTML with age-check bypass
+# ───────────────────────────────────────────────────────────
+def get_page_html(session: requests.Session, url: str) -> str:
+    resp = session.get(url, timeout=10)
+    if "/age_check" in resp.url or "/security_check" in resp.url or "I Agree" in resp.text:
+        soup = BeautifulSoup(resp.text, "html.parser")
+        agree = soup.find("a", string=lambda t: t and "I Agree" in t)
+        if agree and agree.get("href"):
+            resp = session.get(agree["href"], timeout=10)
+    resp.raise_for_status()
+    return resp.text
+
 # ───────────────────────────────────────────────────────────
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
