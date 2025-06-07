@@ -75,41 +75,33 @@ def abs_url(href: str) -> str:
 # Fetch latest videos list via DMM Affiliate API or fallback
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
-    # Use API if available
-    if DMM_API_ID:
-        fl_params = {
-            "api_id":        DMM_API_ID,
-            "affiliate_id":  AFF_ID,
-            "site":          "video",
-            "service":       "amateur",
-            "output":        "json",
-        }
-        try:
-            fl = requests.get("https://api.dmm.com/affiliate/v3/floorList", params=fl_params, timeout=10)
-            fl.raise_for_status()
-            floor_list = fl.json().get("result", {}).get("floor", [])
-            floor_id = floor_list[0].get("floorId") if floor_list else None
-        except:
-            floor_id = None
-
-        if floor_id:
-            il_params = {
-                "api_id":        DMM_API_ID,
-                "affiliate_id":  AFF_ID,
-                "site":          "video",
-                "service":       "amateur",
-                "floorId":       floor_id,
-                "hits":          limit,
-                "sort":          "date",
-                "output":        "json",
-            }
-            try:
-                il = requests.get("https://api.dmm.com/affiliate/v3/ItemList", params=il_params, timeout=10)
-                il.raise_for_status()
-                items = il.json().get("result", {}).get("items", [])
-                videos = [{"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")} for itm in items]
-                print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
-                return videos
+    """
+    Fetch latest amateur videos exclusively via DMM Affiliate API using genre_id.
+    """
+    if not DMM_API_ID:
+        raise RuntimeError("Missing environment variable: DMM_API_ID for Affiliate API")
+    # ItemList API call with genre filter
+    params = {
+        "api_id":       DMM_API_ID,
+        "affiliate_id": AFF_ID,
+        "site":         "video",
+        "service":      "digital",
+        "floor":        "videoa",       # adult videos
+        "genre_id":     "8503",         # amateur gal
+        "hits":         limit,
+        "sort":         "date",
+        "output":       "json",
+    }
+    try:
+        resp = requests.get("https://api.dmm.com/affiliate/v3/ItemList", params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("result", {}).get("items", [])
+        videos = [{"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")} for itm in items]
+        print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
+        return videos
+    except Exception as e:
+        raise RuntimeError(f"DMM Affiliate API fetch failed: {e}")
             except:
                 pass
 
