@@ -27,7 +27,7 @@ WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 LIST_URL   = "https://video.dmm.co.jp/amateur/list/?genre=8503"
-MAX_ITEMS  = 10  # 一覧取得数 (詳細チェック後に絞る)
+MAX_ITEMS  = 10  # 一覧取得数 & 投稿件数
 
 # 必須環境変数チェック
 for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
@@ -85,7 +85,7 @@ def fetch_listed_videos(limit: int):
     return videos
 
 # ───────────────────────────────────────────────────────────
-# 詳細ページからタイトル・説明・画像・ジャンル取得
+# 詳細ページからタイトル・説明・画像取得
 # ───────────────────────────────────────────────────────────
 def scrape_detail(url: str):
     s = get_session()
@@ -93,7 +93,7 @@ def scrape_detail(url: str):
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # タイトル
+    # タイトル取得
     h1 = soup.find("h1")
     if h1:
         title = h1.get_text(strip=True)
@@ -101,13 +101,13 @@ def scrape_detail(url: str):
         og = soup.find("meta", property="og:title")
         title = og["content"].strip() if og and og.get("content") else "No Title"
 
-    # 説明文
+    # 説明文取得
     d = (soup.find("div", class_="mg-b20 lh4")
          or soup.find("div", id="sample-description")
          or soup.find("p", id="sample-description"))
     desc = d.get_text(" ", strip=True) if d else ""
 
-    # サンプル画像
+    # サンプル画像取得
     imgs = []
     for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img"):
         for img in soup.select(sel):
@@ -116,24 +116,13 @@ def scrape_detail(url: str):
                 imgs.append(src)
         if imgs:
             break
+    # fallback: og:image
     if not imgs:
         og_img = soup.find("meta", property="og:image")
         if og_img and og_img.get("content"):
             imgs.append(og_img["content"].strip())
 
-    # ジャンルリスト
-    genres = []
-    for dt in soup.select("dt"):
-        if "ジャンル" in dt.get_text(strip=True):
-            dd = dt.find_next_sibling("dd")
-            if dd:
-                for a in dd.find_all("a"):
-                    nm = a.get_text(strip=True)
-                    if nm:
-                        genres.append(nm)
-            break
-
-    return title, desc, imgs, genres
+    return title, desc, imgs
 
 # ───────────────────────────────────────────────────────────
 # 画像アップロード
@@ -174,7 +163,8 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
     parts.append(f'<div>{desc}</div>')
     for img in imgs[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    parts.append(f'<p><a href="{aff}" target="_blank"><img src="{imgs[0]}" alt="{title}"></a></p>')
+    if imgs:
+        parts.append(f'<p><a href="{aff}" target="_blank"><img src="{imgs[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
 
     post = WordPressPost()
@@ -193,20 +183,17 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
 # ───────────────────────────────────────────────────────────
 def job():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    listed = fetch_listed_videos(MAX_ITEMS*2)
+    videos = fetch_listed_videos(MAX_ITEMS)
     posted = False
-    # ジャンルが「素人」「ギャル」の作品を投稿
-    for vid in listed:
-        title, desc, imgs, genres = scrape_detail(vid["detail_url"])
-        if not all(k in genres for k in ["素人", "ギャル"]):
-            continue
+    for vid in videos:
+        title, desc, imgs = scrape_detail(vid["detail_url"])
         if title == "No Title" or not desc or not imgs:
             continue
         if create_wp_post(title, desc, imgs, vid["detail_url"]):
             posted = True
             break
     if not posted:
-        print("該当する動画が見つかりませんでした: ジャンルに '素人' と 'ギャル' を含む");
+        print("No videos found to post.")
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
 
 if __name__ == "__main__":
