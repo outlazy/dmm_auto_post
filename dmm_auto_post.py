@@ -27,7 +27,7 @@ WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 LIST_URL   = "https://video.dmm.co.jp/amateur/list/?genre=8503"
-MAX_ITEMS  = 10  # 一覧取得数 & 投稿件数
+MAX_ITEMS  = 10  # 一覧取得数
 
 # 必須環境変数チェック
 for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
@@ -184,16 +184,12 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
 def job():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
     videos = fetch_listed_videos(MAX_ITEMS)
-    posted = False
-    for vid in videos:
-        title, desc, imgs = scrape_detail(vid["detail_url"])
-        if title == "No Title" or not desc or not imgs:
-            continue
-        if create_wp_post(title, desc, imgs, vid["detail_url"]):
-            posted = True
-            break
-    if not posted:
+    if not videos:
         print("No videos found to post.")
+    else:
+        vid = videos[0]
+        title, desc, imgs = scrape_detail(vid["detail_url"])
+        create_wp_post(title, desc, imgs, vid["detail_url"])
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
 
 if __name__ == "__main__":
