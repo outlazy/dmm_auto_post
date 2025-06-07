@@ -37,6 +37,7 @@ ITEM_PARAMS = {
     "site":         "FANZA",
     "service":      "digital",
     "genre_id":     "8503",  # amateur gyaru
+    "availability": "1",      # only released items
     "hits":         10,
     "sort":         "date",
     "output":       "json",
@@ -121,38 +122,32 @@ def create_wp_post(video):
     # Build content
     aff_link = make_affiliate_link(video["detail_url"])
     parts = []
+    # Featured image
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
+    # Title link
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
+    # Description
     if video.get("description"):
         parts.append(f'<div>{video["description"]}</div>')
+    # Additional sample images
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
     # Final affiliate link
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    # Set tags by actress, label, genre
-    tags = [] + video.get("actress", []) + video.get("label", []) + video.get("genres", [])
+    # Set tags: actress, label, genre
+    tags = []
+    tags.extend(video.get("actress", []))
+    tags.extend(video.get("label", []))
+    tags.extend(video.get("genres", []))
+    # Deduplicate tags preserving order
+    seen = set()
+    unique_tags = []
+    for t in tags:
+        if t and t not in seen:
+            seen.add(t)
+            unique_tags.append(t)
     # Create post object
     post = WordPressPost()
     post.title = title
-    post.content = "\n".join(parts)
-    post.thumbnail = thumb_id
-    post.terms_names = {"category": ["DMM動画"], "post_tag": tags}
-    post.post_status = "publish"
-    wp.call(posts.NewPost(post))
-    print(f"✔ Posted: {title}")
-    return True
-
-# Main execution
-def main():
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    videos = fetch_latest_videos()
-    for video in videos:
-        if create_wp_post(video):
-            break
-    else:
-        print("No new videos to post.")
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
-
-if __name__ == "__main__":
-    main()
-　
+        post.content = "
+".join(parts)
