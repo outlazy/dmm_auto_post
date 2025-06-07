@@ -50,6 +50,7 @@ def make_affiliate_link(url: str) -> str:
 def get_session():
     s = requests.Session()
     s.headers.update({"User-Agent": USER_AGENT})
+    # 成人確認バイパス用 Cookie
     s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
     s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
     return s
@@ -96,15 +97,25 @@ def fetch_listed_videos(limit: int):
     # li.list-box から新着順にリンクを取得
     for li in soup.select("li.list-box"):  
         a = li.find("a", class_="tmb")
-        if not a or not a.get("href"):
-            continue
-        href = a["href"]
-        url = abs_url(href)
-        title = a.get("title") or (li.find("p", class_="title") and li.find("p", class_="title").get_text(strip=True)) or (a.img and a.img.get("alt")) or "No Title"
-        videos.append({"title": title, "detail_url": url})
+        href = a.get("href") if a else None
+        if href:
+            url = abs_url(href)
+            title = a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else None) or (a.img.get("alt") if a.img else None) or "No Title"
+            if not any(v["detail_url"] == url for v in videos):
+                videos.append({"title": title, "detail_url": url})
         if len(videos) >= limit:
             break
-
+    # フォールバック: detailページリンクを正規表現で取得
+    if not videos:
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if re.search(r"/amateur/detail", href):
+                url = abs_url(href)
+                title = a.get("title") or (a.img.get("alt") if a.img else None) or a.get_text(strip=True) or "No Title"
+                if not any(v["detail_url"] == url for v in videos):
+                    videos.append({"title": title, "detail_url": url})
+            if len(videos) >= limit:
+                break
     print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
     return videos
 
@@ -132,7 +143,6 @@ def scrape_detail(url: str):
             break
     if not imgs and soup.find("meta", property="og:image"):
         imgs.append(soup.find("meta", property="og:image")["content"].strip())
-
     print(f"DEBUG: scrape_detail for {url} yielded {len(imgs)} images")
     return title, desc, imgs
 
@@ -176,8 +186,8 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str) -> b
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
 
     post = WordPressPost()
-    post.title = title
-    post.content = "\n".join(parts)
+    post.title       = title
+    post.content     = "\n".join(parts)
     if thumb_id:
         post.thumbnail = thumb_id
     post.terms_names = {"category": ["DMM動画"], "post_tag": []}
