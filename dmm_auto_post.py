@@ -9,7 +9,6 @@ collections.Iterable = collections.abc.Iterable
 import os
 import time
 import requests
-from datetime import datetime
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
@@ -29,6 +28,7 @@ AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 LIST_URL   = "https://video.dmm.co.jp/amateur/list/?genre=8503"
 MAX_ITEMS  = 10
+KEYWORDS   = ["素人", "ギャル"]  # タイトルに含むキーワードリスト
 
 # 必須チェック
 for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
@@ -80,6 +80,9 @@ def fetch_listed_videos(limit: int):
             continue
         url = abs_url(href)
         title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True)
+        # キーワードフィルタ
+        if not all(k in title for k in KEYWORDS):
+            continue
         videos.append({"title": title, "detail_url": url})
         if len(videos) >= limit:
             break
@@ -94,18 +97,17 @@ def scrape_detail(url: str):
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # タイトル
+    # タイトル取得
     title = None
     h1 = soup.find("h1")
     if h1:
         title = h1.get_text(strip=True)
     else:
         og = soup.find("meta", property="og:title")
-        if og and og.get("content"):
-            title = og["content"].strip()
+        title = og["content"].strip() if og and og.get("content") else None
     title = title or "No Title"
 
-    # 説明文
+    # 説明文取得
     desc = ""
     d = (
         soup.find("div", class_="mg-b20 lh4")
@@ -115,7 +117,7 @@ def scrape_detail(url: str):
     if d:
         desc = d.get_text(" ", strip=True)
 
-    # サンプル画像
+    # サンプル画像取得
     imgs = []
     for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img"):
         for img in soup.select(sel):
@@ -130,19 +132,7 @@ def scrape_detail(url: str):
         if og_img and og_img.get("content"):
             imgs.append(og_img["content"].strip())
 
-    # ジャンル一覧取得
-    genres = []
-    for dt in soup.select("dt"):
-        if "ジャンル" in dt.get_text(strip=True):
-            dd = dt.find_next_sibling("dd")
-            if dd:
-                for a in dd.find_all("a"):
-                    nm = a.get_text(strip=True)
-                    if nm:
-                        genres.append(nm)
-            break
-
-    return title, desc, imgs, genres
+    return title, desc, imgs
 
 # ───────────────────────────────────────────────────────────
 # 画像アップ & 投稿
@@ -154,16 +144,18 @@ def upload_image(wp: Client, url: str) -> int:
     resp = wp.call(media.UploadFile(media_data))
     return resp.get("id")
 
+# ───────────────────────────────────────────────────────────
+# WordPress 投稿作成
+# ───────────────────────────────────────────────────────────
 def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
     wp = Client(WP_URL, WP_USER, WP_PASS)
-
     # 重複チェック
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if any(p.title == title for p in existing):
         print(f"→ Skipping duplicate: {title}")
         return False
 
-    # アイキャッチ
+    # アイキャッチ登録
     thumb_id = None
     if imgs:
         try:
@@ -172,7 +164,6 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
             print("アイキャッチアップ失敗:", e)
 
     aff = make_affiliate_link(detail_url)
-
     # 本文組み立て
     parts = []
     if imgs:
@@ -192,30 +183,25 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
         post.thumbnail = thumb_id
     post.terms_names = {"category": ["DMM動画"], "post_tag": []}
     post.post_status = "publish"
-
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {title}")
     return True
 
 # ───────────────────────────────────────────────────────────
-# ジョブ
+# メインジョブ
 # ───────────────────────────────────────────────────────────
 def job():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    listed = fetch_listed_videos(MAX_ITEMS * 2)
-    posted = False
-    for vid in listed:
-        title, desc, imgs, genres = scrape_detail(vid["detail_url"])
-        # ギャルジャンルのみ投稿
-        if "ギャル" not in genres:
-            continue
-        if title == "No Title" or not desc or not imgs:
-            continue
-        if create_wp_post(title, desc, imgs, vid["detail_url"]):
-            posted = True
-            break
-    if not posted:
-        print(f"No videos found with genre ギャル")
+    videos = fetch_listed_videos(MAX_ITEMS * 2)
+    if not videos:
+        print(f"No videos matching keywords: {KEYWORDS}")
+    else:
+        for vid in videos:
+            title, desc, imgs = scrape_detail(vid["detail_url"])
+            if title == "No Title" or not desc or not imgs:
+                continue
+            if create_wp_post(title, desc, imgs, vid["detail_url"]):
+                break
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
 
 if __name__ == "__main__":
