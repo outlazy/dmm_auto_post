@@ -29,7 +29,7 @@ for name, val in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DM
     if not val:
         raise RuntimeError(f"Missing environment variable: {name}")
 
-# Affiliate API endpoint and parameters for latest amateur videos (genre 8503)
+# Affiliate API endpoint and parameters
 API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
 ITEM_PARAMS = {
     "api_id":       DMM_API_ID,
@@ -37,12 +37,12 @@ ITEM_PARAMS = {
     "site":         "FANZA",
     "service":      "digital",
     "genre_id":     "8503",  # amateur gyaru
-    "hits":         10,       # fetch up to 10 items
+    "hits":         10,
     "sort":         "date",
     "output":       "json",
 }
 
-# Helper: build affiliate link
+# Build affiliate link
 def make_affiliate_link(url: str) -> str:
     parsed = urlparse(url)
     qs = dict(parse_qsl(parsed.query))
@@ -50,35 +50,34 @@ def make_affiliate_link(url: str) -> str:
     new_query = urlencode(qs)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
-# Fetch latest list via API
-def fetch_latest_video():
+# Fetch latest videos via API
+def fetch_latest_videos():
     resp = requests.get(API_URL, params=ITEM_PARAMS, timeout=10)
     try:
         resp.raise_for_status()
     except Exception as e:
         print(f"DEBUG: API request failed: {e}")
-        return None
+        return []
     data = resp.json()
     items = data.get("result", {}).get("items", [])
-    if not items:
-        return None
-    item = items[0]
-    return {
-        "title":      item.get("title", "No Title"),
-        "detail_url": item.get("URL"),
-        "description":item.get("description", ""),
-    }
+    videos = []
+    for item in items:
+        videos.append({
+            "title":      item.get("title", "No Title"),
+            "detail_url": item.get("URL"),
+            "description":item.get("description", ""),
+        })
+    print(f"DEBUG: API returned {len(videos)} items")
+    return videos
 
-# Scrape detail page for images after release
+# Scrape detail page for sample images
 def scrape_detail_images(detail_url: str) -> list[str]:
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0"})
-    # Bypass age-check cookie
     session.cookies.set("ckcy","1",domain=".dmm.co.jp")
-    resp = session.get(detail_url, timeout=10)
-    soup = BeautifulSoup(resp.text, "html.parser")
+    html = session.get(detail_url, timeout=10).text
+    soup = BeautifulSoup(html, "html.parser")
     imgs = []
-    # Sample images selectors
     selectors = ["div#sample-image-box img","img.sample-box__img","li.sample-box__item img","figure img"]
     for sel in selectors:
         for img in soup.select(sel):
@@ -87,13 +86,12 @@ def scrape_detail_images(detail_url: str) -> list[str]:
                 imgs.append(src)
         if imgs:
             break
-    # Fallback og:image
     if not imgs and soup.find("meta",property="og:image"):
         imgs.append(soup.find("meta",property="og:image")["content"].strip())
-    print(f"DEBUG: scrape_detail_images found {len(imgs)} images")
+    print(f"DEBUG: scrape_detail_images found {len(imgs)} images for {detail_url}")
     return imgs
 
-# Upload image to WP
+# Upload image to WordPress
 def upload_image(wp: Client, url: str) -> int:
     data = requests.get(url, timeout=10).content
     name = os.path.basename(urlparse(url).path)
@@ -101,18 +99,18 @@ def upload_image(wp: Client, url: str) -> int:
     res = wp.call(media.UploadFile(media_data))
     return res.get("id")
 
-# Create WP post
+# Create WordPress post
 def create_wp_post(video):
     wp = Client(WP_URL, WP_USER, WP_PASS)
     title = video["title"]
-    # Check duplicate
+    # Skip if duplicate
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
-    if any(p.title==title for p in existing):
+    if any(p.title == title for p in existing):
         print(f"→ Skipping duplicate: {title}")
-        return
-    # Scrape images from detail page
+        return False
+    # Scrape images
     images = scrape_detail_images(video["detail_url"])
-    # Upload first image as thumbnail
+    # Upload first image as featured
     thumb_id = upload_image(wp, images[0]) if images else None
     # Build content
     aff_link = make_affiliate_link(video["detail_url"])
@@ -122,23 +120,30 @@ def create_wp_post(video):
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     if video.get("description"):
         parts.append(f'<div>{video["description"]}</div>')
-    # Insert remaining images
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    # Final affiliate link
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    # Publish
-    post = WordPressPost(); post.title=title; post.content="\n".join(parts)
-    if thumb_id: post.thumbnail=thumb_id
-    post.terms_names={"category":["DMM動画"],"post_tag":[]}; post.post_status="publish"
-    wp.call(posts.NewPost(post)); print(f"✔ Posted: {title}")
+    post = WordPressPost()
+    post.title = title
+    post.content = "\n".join(parts)
+    if thumb_id:
+        post.thumbnail = thumb_id
+    post.terms_names = {"category": ["DMM動画"], "post_tag": []}
+    post.post_status = "publish"
+    wp.call(posts.NewPost(post))
+    print(f"✔ Posted: {title}")
+    return True
 
 # Main
-if __name__=="__main__":
+def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    video = fetch_latest_video()
-    if video:
-        create_wp_post(video)
+    videos = fetch_latest_videos()
+    for video in videos:
+        if create_wp_post(video):
+            break
     else:
-        print("No videos found to post.")
+        print("No new videos to post.")
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
+
+if __name__ == "__main__":
+    main()
