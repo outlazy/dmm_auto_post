@@ -63,9 +63,6 @@ def abs_url(href: str) -> str:
 # Fetch latest videos list via DMM Affiliate API
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
-    """
-    Fetch latest amateur videos via DMM Affiliate API (using floorList and itemList), fallback to HTML scraping.
-    """
     if not DMM_API_ID:
         raise RuntimeError("Missing environment variable: DMM_API_ID for Affiliate API")
 
@@ -83,13 +80,11 @@ def fetch_listed_videos(limit: int):
         fl_resp.raise_for_status()
         fl_data = fl_resp.json()
         floor_items = fl_data.get("result", {}).get("floor", [])
-        # Use first available floorId
         floor_id = floor_items[0].get("floorId") if floor_items else None
     except Exception as e:
         print(f"DEBUG: floorList API failed ({e}), falling back to HTML scraping")
         floor_id = None
 
-    videos = []
     # 2) Fetch via itemList API if floor_id available
     if floor_id:
         il_params = {
@@ -108,8 +103,10 @@ def fetch_listed_videos(limit: int):
             il_resp.raise_for_status()
             il_data = il_resp.json()
             items = il_data.get("result", {}).get("items", [])
-            for itm in items:
-                videos.append({"title": itm.get("title", "No Title"), "detail_url": itm.get("URL")})
+            videos = [{
+                "title": itm.get("title", "No Title"),
+                "detail_url": itm.get("URL")
+            } for itm in items]
             print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
             return videos
         except Exception as e:
@@ -119,47 +116,17 @@ def fetch_listed_videos(limit: int):
     session = get_session()
     resp = session.get(LIST_URL, timeout=10)
     soup = BeautifulSoup(resp.text, "html.parser")
-    for li in soup.select("li.list-box")[:limit]:
-        a = li.find("a", class_="tmb")
-        if not a or not a.get("href"):
-            continue
-        url = abs_url(a["href"])
-        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title")
-        videos.append({"title": title, "detail_url": url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping from {LIST_URL}")
-    return videos
-        except Exception as e:
-            print(f"DEBUG: ItemList API failed ({e}), falling back to HTML scraping")
-
-    # 3) Fallback HTML scraping
-    session = get_session()
-    resp = session.get(LIST_URL, timeout=10)
-    soup = BeautifulSoup(resp.text, "html.parser")
-    for li in soup.select("li.list-box")[:limit]:
-        a = li.find("a", class_="tmb")
-        if not a or not a.get("href"):
-            continue
-        url = abs_url(a.get("href"))
-        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title")
-        videos.append({"title": title, "detail_url": url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping")
-    return videos
-    except Exception as e:
-        print(f"DEBUG: DMM API fetch failed ({e}), falling back to HTML scraping")
-
-    # Fallback HTML scraping
-    session = get_session()
-    resp = session.get(LIST_URL, timeout=10)
-    soup = BeautifulSoup(resp.text, "html.parser")
     videos = []
     for li in soup.select("li.list-box")[:limit]:
         a = li.find("a", class_="tmb")
         if not a or not a.get("href"):
             continue
         url = abs_url(a["href"])
-        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or li.find("p", class_="title").get_text(strip=True)
+        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or (
+            li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title"
+        )
         videos.append({"title": title, "detail_url": url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping")
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping from {LIST_URL}")
     return videos
 
 # ───────────────────────────────────────────────────────────
@@ -170,13 +137,15 @@ def scrape_detail(url: str):
     resp = session.get(url, timeout=10)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
-    # Title
+
     h1 = soup.find("h1")
-    title = h1.get_text(strip=True) if h1 else (soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title")
-    # Description
+    title = h1.get_text(strip=True) if h1 else (
+        soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title"
+    )
+
     d = soup.find("div", class_="mg-b20 lh4") or soup.find("p", id="sample-description")
     desc = d.get_text(" ", strip=True) if d else ""
-    # Sample images
+
     imgs = []
     for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img"):  
         for img in soup.select(sel):
