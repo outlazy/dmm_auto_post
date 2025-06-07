@@ -63,7 +63,6 @@ def fetch_latest_videos():
     items = data.get("result", {}).get("items", [])
     videos = []
     for item in items:
-        # collect API image as fallback
         api_img = None
         img_info = item.get("imageURL", {})
         if img_info:
@@ -108,7 +107,6 @@ def scrape_detail_images(detail_url: str) -> list[str]:
                 imgs.append(src)
         if imgs:
             break
-    # Fallback og:image
     if not imgs and soup.find("meta",property="og:image"):
         imgs.append(soup.find("meta",property="og:image")["content"].strip())
     print(f"DEBUG: scrape_detail_images found {len(imgs)} images for {detail_url}")
@@ -116,9 +114,7 @@ def scrape_detail_images(detail_url: str) -> list[str]:
 
 # Fetch sample images via Affiliate ItemDetail API
 def fetch_sample_images_api(detail_url: str) -> list[str]:
-    # extract cid parameter
-    m = parse_qsl(urlparse(detail_url).query)
-    cid = dict(m).get("cid") or detail_url.rstrip("/").split("/")[-1]
+    cid = dict(parse_qsl(urlparse(detail_url).query)).get("cid") or detail_url.rstrip("/").split("/")[-1]
     params = {
         "api_id":       DMM_API_ID,
         "affiliate_id": AFF_ID,
@@ -138,16 +134,12 @@ def fetch_sample_images_api(detail_url: str) -> list[str]:
     if not data:
         return []
     item = data[0]
-    # sampleImageURL may be list or single
     samples = item.get("sampleImageURL", {}).get("large")
     if isinstance(samples, list):
         return samples
     if isinstance(samples, str):
         return [samples]
     return []
-
-# Update create_wp_post to use API samples fallback
-
 
 # Upload image to WordPress
 def upload_image(wp: Client, url: str) -> int:
@@ -161,14 +153,11 @@ def upload_image(wp: Client, url: str) -> int:
 def create_wp_post(video):
     wp = Client(WP_URL, WP_USER, WP_PASS)
     title = video["title"]
-    # Skip if duplicate
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if any(p.title == title for p in existing):
         print(f"→ Skipping duplicate: {title}")
         return False
-    # Scrape sample images
     images = scrape_detail_images(video["detail_url"])
-    # fallback to API sample images if necessary
     if not images:
         api_imgs = fetch_sample_images_api(video["detail_url"])
         if api_imgs:
@@ -176,40 +165,29 @@ def create_wp_post(video):
     if not images:
         print(f"→ Skipping unreleased or no-sample item: {title}")
         return False
-    # Upload first image as featured
     thumb_id = upload_image(wp, images[0])
-    # Build content
     aff_link = make_affiliate_link(video["detail_url"])
     parts = []
-    # Featured image
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
-    # Title link
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    # Description
     if video.get("description"):
         parts.append(f'<div>{video["description"]}</div>')
-    # Additional sample images
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    # Final affiliate link
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    # Set tags: actress, label, genre
     tags = []
     tags.extend(video.get("actress", []))
     tags.extend(video.get("label", []))
     tags.extend(video.get("genres", []))
-    # Deduplicate tags preserving order
     seen = set()
     unique_tags = []
     for t in tags:
         if t and t not in seen:
             seen.add(t)
             unique_tags.append(t)
-    # Create post object
     post = WordPressPost()
     post.title = title
-    post.content = "
-".join(parts)
+    post.content = "\n".join(parts)
     post.thumbnail = thumb_id
     post.terms_names = {"category": ["DMM動画"], "post_tag": unique_tags}
     post.post_status = "publish"
