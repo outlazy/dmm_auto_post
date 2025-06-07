@@ -93,31 +93,25 @@ def abs_url(href: str) -> str:
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
     """
-    DMM アフィリエイトAPIを使用して、新着順で動画の一覧をJSONで取得します。
-    要求には環境変数 DMM_API_ID を api_id として、site=video, service=amateur, sort=date, hits=limit を指定します。
+    HTMLスクレイピングで新着動画の一覧を取得します。
+    <a class="tmb"> 要素を取得し、href とタイトルを抽出します。
     """
-    api_id = os.getenv("DMM_API_ID") or os.getenv("DMM_AFFILIATE_ID")
-    if not api_id:
-        raise RuntimeError("Missing DMM_API_ID environment variable for API calls.")
-    params = {
-        "api_id": api_id,
-        "affiliate_id": AFF_ID,
-        "site": "video",
-        "service": "amateur",
-        "sort": "date",
-        "hits": limit,
-        "output": "json"
-    }
-    url = "https://api.dmm.com/affiliate/v3/ItemList"
-    resp = requests.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+    session = get_session()
+    resp = fetch_with_age_check(session, LIST_URL)
+    soup = BeautifulSoup(resp.text, "html.parser")
+
     videos = []
-    for item in data.get("result", {}).get("items", []):
-        detail_url = item.get("URL")
-        title = item.get("title")
-        videos.append({"title": title, "detail_url": detail_url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via DMM API")
+    # <a class="tmb"> 要素から取得
+    for a in soup.select("a.tmb"):
+        href = a.get("href")
+        if not href:
+            continue
+        url = abs_url(href)
+        title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True) or "No Title"
+        videos.append({"title": title, "detail_url": url})
+        if len(videos) >= limit:
+            break
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping from {LIST_URL}")
     return videos
 
 # ───────────────────────────────────────────────────────────
