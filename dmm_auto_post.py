@@ -98,14 +98,14 @@ def fetch_listed_videos(limit: int):
     # API経由で取得
     api_id = os.getenv("DMM_API_ID")
     if api_id:
-        params = {
+                params = {
             "api_id": api_id,
             "affiliate_id": AFF_ID,
-            "site": "video",
-            "service": "amateur",
-            "sort": "date",
-            "genre_id": "8503",
+            "site": "FANZA",
+            "service": "digital",
+            "floor": "videoa",
             "hits": limit,
+            "sort": "date",
             "output": "json"
         }
         url = "https://api.dmm.com/affiliate/v3/ItemList"
