@@ -58,15 +58,25 @@ def get_session():
 # Age check フォーム自動送信
 # ───────────────────────────────────────────────────────────
 def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
+    # 初回リクエスト
     resp = session.get(url, timeout=10)
-    if "age_check" in resp.url or "I Agree" in resp.text:
+    # Japanese age check form handling
+    if "age_check" in resp.url or "security_check" in resp.url:
         soup = BeautifulSoup(resp.text, "html.parser")
-        form = soup.find("form")
-        if form and form.get("action"):
-            action = form["action"]
-            data = {inp["name"]: inp.get("value", "ok") or "ok" for inp in form.find_all("input", attrs={"name": True})}
-            session.post(action, data=data, timeout=10)
+        # Try English "I Agree" link
+        agree = soup.find("a", string=re.compile(r"I Agree", re.I))
+        if agree and agree.get("href"):
+            session.get(agree["href"], timeout=10)
             resp = session.get(url, timeout=10)
+        else:
+            # Try form submission if exists
+            form = soup.find("form")
+            if form and form.get("action"):
+                action = form["action"]
+                data = {inp.get("name"): inp.get("value", "ok") or "ok" for inp in form.find_all("input", attrs={"name": True})}
+                session.post(action, data=data, timeout=10)
+                resp = session.get(url, timeout=10)
+    # Final check
     resp.raise_for_status()
     return resp
 
