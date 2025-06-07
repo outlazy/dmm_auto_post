@@ -113,13 +113,13 @@ def fetch_listed_videos(limit: int):
             except:
                 pass
 
-        # 3) Fallback: extract detail URLs via regex
+            # 3) Fallback: extract any /detail/ links via regex
     session = get_session()
     html = get_page_html(session, LIST_URL)
     seen = set()
     videos = []
-    # regex to find /amateur/detail/... links
-    for match in re.findall(r'href="(/amateur/detail/[^"]+?)"', html):
+    # regex to find any URL path containing /detail/
+    for match in re.findall(r'href=["\']([^"\']*/detail/[^"\']+)["\']', html):
         url = abs_url(match)
         if url in seen:
             continue
