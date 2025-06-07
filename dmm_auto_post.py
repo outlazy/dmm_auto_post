@@ -94,22 +94,29 @@ def fetch_listed_videos(limit: int):
     soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
-    seen = set()
-    # 絞り込み対象のパス断片リスト
-    patterns = ["/amateur/detail/", "/digital/videoc/-/detail/"]
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        # 絶対 URL 化
+    # 1) li.list-box 内 a.tmb から取得 (新着順)
+    for a in soup.select("li.list-box a.tmb"):
+        href = a.get("href")
+        if not href:
+            continue
         url = abs_url(href)
-        # 対象パターンが含まれているか確認
-        if not any(pat in href for pat in patterns):
-            continue
-        if url in seen:
-            continue
-        seen.add(url)
-        videos.append({"detail_url": url})
+        title = a.get("title") or (a.img and a.img.get("alt")) or "No Title"
+        videos.append({"title": title, "detail_url": url})
         if len(videos) >= limit:
             break
+    # 2) フォールバック: /amateur/detail/ へのリンクを正規表現で抽出
+    if not videos:
+        html = resp.text
+        paths = re.findall(r'href=["\'](/amateur/detail/[^"\']+)', html)
+        seen = set()
+        for path in paths:
+            url = abs_url(path)
+            if url in seen:
+                continue
+            seen.add(url)
+            videos.append({"detail_url": url})
+            if len(videos) >= limit:
+                break
     print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
     return videos
 
