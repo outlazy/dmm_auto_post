@@ -113,6 +113,7 @@ def fetch_listed_videos(limit: int):
                 pass
 
         # 3) Fallback: extract detail URLs via regex
+    session = get_session()
     html = get_page_html(session, LIST_URL)
     seen = set()
     videos = []
