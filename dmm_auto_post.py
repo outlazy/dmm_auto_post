@@ -26,7 +26,7 @@ WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-LIST_URL   = "https://video.dmm.co.jp/amateur/list/?genre=8503"
+LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
 MAX_ITEMS  = 10  # 一覧取得数
 
 # 必須環境変数チェック
@@ -49,9 +49,29 @@ def make_affiliate_link(url: str) -> str:
 def get_session():
     s = requests.Session()
     s.headers.update({"User-Agent": USER_AGENT})
+    # クッキーセット
     s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
     s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
     return s
+
+# ───────────────────────────────────────────────────────────
+# Age check フォーム自動送信
+# ───────────────────────────────────────────────────────────
+def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
+    resp = session.get(url, timeout=10)
+    # age_check フォームがある場合
+    if "age_check" in resp.url or resp.text.find("I Agree") != -1:
+        soup = BeautifulSoup(resp.text, "html.parser")
+        form = soup.find("form")
+        if form and form.get("action"):
+            action = form["action"]
+            data = {}
+            for inp in form.find_all("input", attrs={"name": True}):
+                data[inp["name"]] = inp.get("value", "ok") or "ok"
+            session.post(action, data=data, timeout=10)
+            resp = session.get(url, timeout=10)
+    resp.raise_for_status()
+    return resp
 
 # ───────────────────────────────────────────────────────────
 # 絶対URL 変換
@@ -68,24 +88,20 @@ def abs_url(href: str) -> str:
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
     session = get_session()
-    resp = session.get(LIST_URL, timeout=10)
-    resp.raise_for_status()
+    resp = fetch_with_age_check(session, LIST_URL)
     soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
-    # li.list-box 内の a.tmb を取得（新着順）
     for li in soup.select("li.list-box"):  
         a = li.find("a", class_="tmb")
         if not a or not a.get("href"):
             continue
         href = a.get("href")
         url = abs_url(href)
-        # タイトルは title 属性または画像 alt または p.title
         title = a.get("title") or (li.find("p", class_="title") and li.find("p", class_="title").get_text(strip=True)) or (a.img and a.img.get("alt")) or "No Title"
         videos.append({"title": title, "detail_url": url})
         if len(videos) >= limit:
             break
-    # フォールバック: a.tmb 全件取得
     if not videos:
         for a in soup.select("a.tmb"):
             href = a.get("href")
@@ -102,12 +118,10 @@ def fetch_listed_videos(limit: int):
 # 詳細ページからタイトル・説明・画像取得
 # ───────────────────────────────────────────────────────────
 def scrape_detail(url: str):
-    s = get_session()
-    resp = s.get(url, timeout=10)
-    resp.raise_for_status()
+    session = get_session()
+    resp = fetch_with_age_check(session, url)
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # タイトル取得
     h1 = soup.find("h1")
     if h1:
         title = h1.get_text(strip=True)
@@ -115,13 +129,11 @@ def scrape_detail(url: str):
         og = soup.find("meta", property="og:title")
         title = og["content"].strip() if og and og.get("content") else "No Title"
 
-    # 説明文取得
     d = (soup.find("div", class_="mg-b20 lh4")
          or soup.find("div", id="sample-description")
          or soup.find("p", id="sample-description"))
     desc = d.get_text(" ", strip=True) if d else ""
 
-    # サンプル画像取得
     imgs = []
     for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img"):
         for img in soup.select(sel):
@@ -130,7 +142,6 @@ def scrape_detail(url: str):
                 imgs.append(src)
         if imgs:
             break
-    # fallback: og:image
     if not imgs:
         og_img = soup.find("meta", property="og:image")
         if og_img and og_img.get("content"):
@@ -153,14 +164,11 @@ def upload_image(wp: Client, url: str) -> int:
 # ───────────────────────────────────────────────────────────
 def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
     wp = Client(WP_URL, WP_USER, WP_PASS)
-
-    # 重複チェック
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if any(p.title == title for p in existing):
         print(f"→ Skipping duplicate: {title}")
         return False
 
-    # アイキャッチ画像
     thumb_id = None
     if imgs:
         try:
@@ -169,7 +177,6 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str):
             print(f"アイキャッチアップ失敗: {e}")
 
     aff = make_affiliate_link(detail_url)
-    # 本文組み立て
     parts = []
     if imgs:
         parts.append(f'<p><a href="{aff}" target="_blank"><img src="{imgs[0]}" alt="{title}"></a></p>')
