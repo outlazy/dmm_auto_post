@@ -93,16 +93,31 @@ def fetch_listed_videos(limit: int):
     resp = fetch_with_age_check(session, LIST_URL)
     html = resp.text
     # 正規表現で/amateur/detail/以下のURLを抽出
-    matches = re.findall(r'href=["\'](/amateur/detail/[^"\']+)', html)
+        # 正規表現で/amateur/.../detail/...へのリンクを抽出
+    # 相対パスと絶対URLの両方に対応
+    pattern = r'href=["\'](?:https?://video\.dmm\.co\.jp)?(/amateur/[^"\']*?detail/[^"\']+)["\']'
+    paths = re.findall(pattern, html)
+    # 絶対URL付きのパターンも
+    abs_pattern = r'href=["\'](https?://video\.dmm\.co\.jp/amateur/[^"\']*?detail/[^"\']+)["\']'
+    abs_paths = re.findall(abs_pattern, html)
     seen = set()
     videos = []
-    for path in matches:
+    # 相対パスを絶対化
+    for path in paths:
         url = abs_url(path)
         if url in seen:
             continue
         seen.add(url)
         videos.append({"detail_url": url})
-        if len(videos) >= limit:
+        if len(videos) >= MAX_ITEMS:
+            break
+    # 絶対URLパターンを追加
+    for url in abs_paths:
+        if url in seen:
+            continue
+        seen.add(url)
+        videos.append({"detail_url": url})
+        if len(videos) >= MAX_ITEMS:
             break
     print(f"DEBUG: fetch_listed_videos found {len(videos)} items from {LIST_URL}")
     return videos
