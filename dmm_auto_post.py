@@ -50,6 +50,15 @@ def get_session() -> requests.Session:
     # Bypass age-check cookies
     s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
     s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
+    # Bypass DMM age verification forms
+    for url, data in [
+        ("https://www.dmm.co.jp/my/-/service/=/security_age/", {"adult": "ok"}),
+        ("https://www.dmm.co.jp/my/-/service/=/security_check/", {"adult": "ok"})
+    ]:
+        try:
+            s.post(url, data=data, timeout=5)
+        except:
+            pass
     return s
 
 def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
