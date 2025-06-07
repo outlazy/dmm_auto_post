@@ -51,36 +51,27 @@ def make_affiliate_link(url: str) -> str:
     new_query = urlencode(qs)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
-# Fetch latest videos via API
-def fetch_latest_videos():
-    resp = requests.get(API_URL, params=ITEM_PARAMS, timeout=10)
-    try:
-        resp.raise_for_status()
-    except Exception as e:
-        print(f"DEBUG: API request failed: {e}")
-        return []
-    data = resp.json()
-    items = data.get("result", {}).get("items", [])
+# Fetch latest videos via HTML scraping of genre page
+def fetch_latest_videos(limit: int = 10):
+    """
+    Scrape the amateur gyaru genre page directly to get latest released videos.
+    """
+    GENRE_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503"
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0"})
+    session.cookies.set("ckcy","1",domain=".dmm.co.jp")
+    resp = session.get(GENRE_URL, timeout=10)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
     videos = []
-    for item in items:
-        api_img = None
-        img_info = item.get("imageURL", {})
-        if img_info:
-            large = img_info.get("large")
-            if isinstance(large, list) and large:
-                api_img = large[0]
-            elif isinstance(large, str):
-                api_img = large
-        videos.append({
-            "title":       item.get("title", "No Title"),
-            "detail_url":  item.get("URL"),
-            "description": item.get("description", ""),
-            "actress":     [a.get("name") for a in item.get("actress", [])],
-            "label":       [l.get("name") for l in item.get("label", [])],
-            "genres":      [g.get("name") for g in item.get("genre", [])],
-            "api_image":   api_img,
-        })
-    print(f"DEBUG: API returned {len(videos)} items")
+    for li in soup.select("li.list-box")[:limit]:
+        a = li.find("a", class_="tmb")
+        if not a or not a.get("href"):
+            continue
+        url = a["href"] if a["href"].startswith("http") else f"https://video.dmm.co.jp{a['href']}"
+        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or li.find("p", class_="title").get_text(strip=True)
+        videos.append({"title": title, "detail_url": url})
+    print(f"DEBUG: HTML scraping returned {len(videos)} items from genre page")
     return videos
 
 # Scrape detail page for sample images
