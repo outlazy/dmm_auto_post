@@ -34,10 +34,10 @@ API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
 ITEM_PARAMS = {
     "api_id":       DMM_API_ID,
     "affiliate_id": AFF_ID,
-    "site":         "FANZA",
-    "service":      "digital",
-    "genre_id":     "8503",  # amateur gyaru
-    "availability": "1",      # only released items
+    "site":         "video",     # Amateur content site
+    "service":      "amateur",   # Amateur service
+    "genre_id":     "8503",      # amateur gyaru
+    "availability": "1",         # only released items
     "hits":         10,
     "sort":         "date",
     "output":       "json",
