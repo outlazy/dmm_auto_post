@@ -57,6 +57,18 @@ def abs_url(href: str) -> str:
     return href
 
 # ───────────────────────────────────────────────────────────
+# Fetch HTML with age-check bypass
+# ───────────────────────────────────────────────────────────
+def get_page_html(session: requests.Session, url: str) -> str:
+    html = get_page_html(session, url)
+    soup = BeautifulSoup(html, "html.parser")(resp.text, "html.parser")
+        agree = soup.find("a", string=lambda t: t and "I Agree" in t)
+        if agree and agree.get("href"):
+            resp = session.get(agree["href"], timeout=10)
+    resp.raise_for_status()
+    return resp.text
+
+# ───────────────────────────────────────────────────────────
 # Fetch latest videos list via DMM Affiliate API
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
@@ -112,8 +124,8 @@ def fetch_listed_videos(limit: int):
 
     # 3) Fallback: HTML scraping
     session = get_session()
-    resp = session.get(LIST_URL, timeout=10)
-    soup = BeautifulSoup(resp.text, "html.parser")
+    html = get_page_html(session, LIST_URL)
+    soup = BeautifulSoup(html, "html.parser")(resp.text, "html.parser")
     videos = []
     for li in soup.select("li.list-box")[:limit]:
         a = li.find("a", class_="tmb")
