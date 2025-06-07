@@ -149,6 +149,24 @@ def create_wp_post(video):
     # Create post object
     post = WordPressPost()
     post.title = title
-        post.content = "
-".join(parts)
-　
+    post.content = "\n".join(parts)
+    post.thumbnail = thumb_id
+    post.terms_names = {"category": ["DMM動画"], "post_tag": unique_tags}
+    post.post_status = "publish"
+    wp.call(posts.NewPost(post))
+    print(f"✔ Posted: {title}")
+    return True
+
+# Main execution
+def main():
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
+    videos = fetch_latest_videos()
+    for video in videos:
+        if create_wp_post(video):
+            break
+    else:
+        print("No new videos to post.")
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
+
+if __name__ == "__main__":
+    main()
