@@ -3,7 +3,7 @@
 
 import collections
 import collections.abc
-# WordPress XML-RPC の互換性パッチ
+# WordPress XML-RPC compatibility patch
 collections.Iterable = collections.abc.Iterable
 
 import os
@@ -19,7 +19,7 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # ───────────────────────────────────────────────────────────
-# 環境変数読み込み & 定数定義
+# Load environment variables & constants
 # ───────────────────────────────────────────────────────────
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
@@ -28,40 +28,35 @@ WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 LIST_URL   = "https://video.dmm.co.jp/amateur/list/?sort=date"
-MAX_ITEMS  = 10  # 一覧取得数
+MAX_ITEMS  = 10  # Number of videos to fetch
 
-# 必須環境変数チェック
+# Validate required variables
 for name, v in [("WP_URL",WP_URL),("WP_USER",WP_USER),("WP_PASS",WP_PASS),("DMM_AFFILIATE_ID",AFF_ID)]:
     if not v:
         raise RuntimeError(f"Missing environment variable: {name}")
 
 # ───────────────────────────────────────────────────────────
-# affiliate_id 付与
+# Helper functions
 # ───────────────────────────────────────────────────────────
 def make_affiliate_link(url: str) -> str:
-    p  = urlparse(url)
-    qs = dict(parse_qsl(p.query))
+    p   = urlparse(url)
+    qs  = dict(parse_qsl(p.query))
     qs["affiliate_id"] = AFF_ID
     return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(qs), p.fragment))
 
-# ───────────────────────────────────────────────────────────
-# セッション取得 & Age-check bypass
-# ───────────────────────────────────────────────────────────
-def get_session():
+def get_session() -> requests.Session:
     s = requests.Session()
     s.headers.update({"User-Agent": USER_AGENT})
-    # 成人確認バイパス用 Cookie
+    # Bypass age-check cookies
     s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
     s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
     return s
 
-# ───────────────────────────────────────────────────────────
-# Age check フォーム自動送信
-# ───────────────────────────────────────────────────────────
 def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
     resp = session.get(url, timeout=10)
-    if "age_check" in resp.url or "security_check" in resp.url or "I Agree" in resp.text:
+    if any(indicator in resp.url for indicator in ("age_check", "security_check")) or "I Agree" in resp.text:
         soup = BeautifulSoup(resp.text, "html.parser")
+        # Try English link
         agree = soup.find("a", string=re.compile(r"I Agree", re.I))
         if agree and agree.get("href"):
             session.get(agree["href"], timeout=10)
@@ -75,9 +70,6 @@ def fetch_with_age_check(session: requests.Session, url: str) -> requests.Respon
     resp.raise_for_status()
     return resp
 
-# ───────────────────────────────────────────────────────────
-# URL 正規化
-# ───────────────────────────────────────────────────────────
 def abs_url(href: str) -> str:
     if href.startswith("//"):
         return f"https:{href}"
@@ -86,27 +78,23 @@ def abs_url(href: str) -> str:
     return href
 
 # ───────────────────────────────────────────────────────────
-# 一覧ページから動画URL取得
-# ───────────────────────────────────────────────────────────
-# ───────────────────────────────────────────────────────────
-# DMM アフィリエイト API で新着動画を取得
+# Fetch latest videos list
 # ───────────────────────────────────────────────────────────
 def fetch_listed_videos(limit: int):
     """
-    DMMアフィリエイトAPIで新着順にAmateur動画を取得し、API失敗時はHTMLスクレイピングにフォールバックします。
+    Use DMM Affiliate API if available, else HTML scrape li.list-box a.tmb
     """
-    # API経由で取得
     api_id = os.getenv("DMM_API_ID")
     if api_id:
         params = {
-            "api_id": api_id,
+            "api_id":       api_id,
             "affiliate_id": AFF_ID,
-            "site": "video",
-            "service": "amateur",
-            "sort": "date",
-            "genre_id": "8503",
-            "hits": limit,
-            "output": "json"
+            "site":         "video",
+            "service":      "amateur",
+            "sort":         "date",
+            "genre_id":     "8503",
+            "hits":         limit,
+            "output":       "json",
         }
         api_url = "https://api.dmm.com/affiliate/v3/ItemList"
         try:
@@ -120,7 +108,6 @@ def fetch_listed_videos(limit: int):
         except Exception as e:
             print(f"DEBUG: DMM API fetch failed: {e}, falling back to HTML scraping")
 
-    # HTMLスクレイピングにフォールバック
     session = get_session()
     resp = fetch_with_age_check(session, LIST_URL)
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -130,55 +117,30 @@ def fetch_listed_videos(limit: int):
         if not a or not a.get("href"):
             continue
         url = abs_url(a.get("href"))
-        if a.img and a.img.get("alt"):
-            title = a.img.get("alt").strip()
-        else:
-            title = a.get("title") or (li.find("p", class_="title").get_text(strip=True) if li.find("p", class_="title") else "No Title")
+        title = a.img.get("alt").strip() if a.img and a.img.get("alt") else a.get("title") or li.find("p", class_="title").get_text(strip=True)
         videos.append({"title": title, "detail_url": url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via <li.list-box> scraping from {LIST_URL}")
-    return videos
-        except Exception as e:
-            print(f"DEBUG: DMM API fetch failed: {e}, falling back to HTML scraping")
-
-    # HTMLスクレイピングにフォールバック
-    session = get_session()
-    resp = fetch_with_age_check(session, LIST_URL)
-    soup = BeautifulSoup(resp.text, "html.parser")
-    videos = []
-    for li in soup.select("li.list-box")[:limit]:
-        a = li.find("a", class_="tmb")
-        if not a or not a.get("href"):
-            continue
-        url = abs_url(a["href"])
-        title = a.img.get("alt", "").strip() if a.img and a.img.get("alt") else a.get("title") or li.find("p", class_="title").get_text(strip=True)
-        videos.append({"title": title, "detail_url": url})
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via <li.list-box> scraping from {LIST_URL}")
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping")
     return videos
 
 # ───────────────────────────────────────────────────────────
-# 詳細ページからタイトル・説明・画像取得
+# Scrape detail page
 # ───────────────────────────────────────────────────────────
 def scrape_detail(url: str):
     session = get_session()
     resp = fetch_with_age_check(session, url)
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # タイトル取得
+    # Title
     h1 = soup.find("h1")
-    title = h1.get_text(strip=True) if h1 else (
-        soup.find("meta", property="og:title")["content"].strip() 
-        if soup.find("meta", property="og:title") else "No Title"
-    )
+    title = h1.get_text(strip=True) if h1 else (soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title")
 
-    # 説明文取得
-    d = soup.find(lambda tag: tag.name in ["div","p"] and (
-        (tag.get("class") == ["mg-b20","lh4"]) or (tag.get("id") == "sample-description")
-    ))
+    # Description
+    d = soup.find(lambda tag: tag.name in ["div","p"] and (tag.get("class") == ["mg-b20","lh4"] or tag.get("id") == "sample-description"))
     desc = d.get_text(" ", strip=True) if d else ""
 
-    # サンプル画像取得
+    # Sample images
     imgs = []
-    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img", "figure img"):  
+    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img"):  
         for img in soup.select(sel):
             src = img.get("data-original") or img.get("src")
             if src and src not in imgs:
@@ -191,7 +153,7 @@ def scrape_detail(url: str):
     return title, desc, imgs
 
 # ───────────────────────────────────────────────────────────
-# 画像アップロード
+# Upload image
 # ───────────────────────────────────────────────────────────
 def upload_image(wp: Client, url: str) -> int:
     data = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10).content
@@ -201,7 +163,7 @@ def upload_image(wp: Client, url: str) -> int:
     return res.get("id")
 
 # ───────────────────────────────────────────────────────────
-# Wordpress 投稿作成
+# Create WP post
 # ───────────────────────────────────────────────────────────
 def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str) -> bool:
     wp = Client(WP_URL, WP_USER, WP_PASS)
@@ -215,7 +177,7 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str) -> b
         try:
             thumb_id = upload_image(wp, imgs[0])
         except Exception as e:
-            print(f"アイキャッチアップ失敗: {e}")
+            print(f"Thumbnail upload failed: {e}")
 
     aff = make_affiliate_link(detail_url)
     parts = []
@@ -241,7 +203,7 @@ def create_wp_post(title: str, desc: str, imgs: list[str], detail_url: str) -> b
     return True
 
 # ───────────────────────────────────────────────────────────
-# メイン処理
+# Main job
 # ───────────────────────────────────────────────────────────
 def job():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
@@ -249,9 +211,8 @@ def job():
     if not videos:
         print("No videos found to post.")
     else:
-        vid = videos[0]
-        title, desc, imgs = scrape_detail(vid["detail_url"])
-        create_wp_post(title, desc, imgs, vid["detail_url"])
+        title, desc, imgs = scrape_detail(videos[0]["detail_url"])
+        create_wp_post(title, desc, imgs, videos[0]["detail_url"])
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
 
 if __name__ == "__main__":
