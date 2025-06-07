@@ -94,24 +94,28 @@ def abs_url(href: str) -> str:
 def fetch_listed_videos(limit: int):
     """
     HTMLスクレイピングで新着動画の一覧を取得します。
-    <a class="tmb"> 要素を取得し、href とタイトルを抽出します。
+    <li class="list-box"> の中の <a class="tmb"> から href とタイトル(alt)を抽出します。
     """
     session = get_session()
     resp = fetch_with_age_check(session, LIST_URL)
     soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
-    # <a class="tmb"> 要素から取得
-    for a in soup.select("a.tmb"):
-        href = a.get("href")
-        if not href:
+    # <li class="list-box"> の各要素から取得
+    for li in soup.select("li.list-box")[:limit]:
+        a = li.find("a", class_="tmb")
+        if not a or not a.get("href"):
             continue
+        href = a["href"]
         url = abs_url(href)
-        title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True) or "No Title"
+        # タイトルは img.alt または a.title 属性
+        title = None
+        if a.img and a.img.get("alt"):
+            title = a.img.get("alt").strip()
+        else:
+            title = a.get("title") or li.find("p", class_="title").get_text(strip=True)
         videos.append({"title": title, "detail_url": url})
-        if len(videos) >= limit:
-            break
-    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via HTML scraping from {LIST_URL}")
+    print(f"DEBUG: fetch_listed_videos found {len(videos)} items via <li.list-box> scraping from {LIST_URL}")
     return videos
 
 # ───────────────────────────────────────────────────────────
