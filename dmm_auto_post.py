@@ -50,7 +50,6 @@ def make_affiliate_link(url: str) -> str:
 def get_session():
     s = requests.Session()
     s.headers.update({"User-Agent": USER_AGENT})
-    # 成人確認バイパス用 Cookie
     s.cookies.set("ckcy", "1", domain=".dmm.co.jp")
     s.cookies.set("ckcy", "1", domain="video.dmm.co.jp")
     return s
@@ -59,25 +58,19 @@ def get_session():
 # Age check フォーム自動送信
 # ───────────────────────────────────────────────────────────
 def fetch_with_age_check(session: requests.Session, url: str) -> requests.Response:
-    # 初回リクエスト
     resp = session.get(url, timeout=10)
-    # Japanese age check form handling
-    if "age_check" in resp.url or "security_check" in resp.url:
+    if "age_check" in resp.url or "security_check" in resp.url or "I Agree" in resp.text:
         soup = BeautifulSoup(resp.text, "html.parser")
-        # Try English "I Agree" link
         agree = soup.find("a", string=re.compile(r"I Agree", re.I))
         if agree and agree.get("href"):
             session.get(agree["href"], timeout=10)
-            resp = session.get(url, timeout=10)
         else:
-            # Try form submission if exists
             form = soup.find("form")
             if form and form.get("action"):
                 action = form["action"]
                 data = {inp.get("name"): inp.get("value", "ok") or "ok" for inp in form.find_all("input", attrs={"name": True})}
                 session.post(action, data=data, timeout=10)
-                resp = session.get(url, timeout=10)
-    # Final check
+        resp = session.get(url, timeout=10)
     resp.raise_for_status()
     return resp
 
@@ -100,14 +93,15 @@ def fetch_listed_videos(limit: int):
     soup = BeautifulSoup(resp.text, "html.parser")
 
     videos = []
-    # detailed page link extraction
-    for a in soup.find_all("a", href=True):
+    # li.list-box から新着順にリンクを取得
+    for li in soup.select("li.list-box"):  
+        a = li.find("a", class_="tmb")
+        if not a or not a.get("href"):
+            continue
         href = a["href"]
-        if "/amateur/" in href and "/detail/" in href:
-            url = abs_url(href)
-            title = a.get("title") or (a.img and a.img.get("alt")) or a.get_text(strip=True) or "No Title"
-            if not any(v["detail_url"] == url for v in videos):
-                videos.append({"title": title, "detail_url": url})
+        url = abs_url(href)
+        title = a.get("title") or (li.find("p", class_="title") and li.find("p", class_="title").get_text(strip=True)) or (a.img and a.img.get("alt")) or "No Title"
+        videos.append({"title": title, "detail_url": url})
         if len(videos) >= limit:
             break
 
@@ -122,31 +116,22 @@ def scrape_detail(url: str):
     resp = fetch_with_age_check(session, url)
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # title
     h1 = soup.find("h1")
-    if h1:
-        title = h1.get_text(strip=True)
-    else:
-        og = soup.find("meta", property="og:title")
-        title = og["content"].strip() if og and og.get("content") else "No Title"
+    title = h1.get_text(strip=True) if h1 else (soup.find("meta", property="og:title")["content"].strip() if soup.find("meta", property="og:title") else "No Title")
 
-    # description
     d = soup.find(lambda tag: tag.name in ["div","p"] and ((tag.get("class") == ["mg-b20","lh4"]) or tag.get("id") == "sample-description"))
     desc = d.get_text(" ", strip=True) if d else ""
 
-    # sample images
     imgs = []
-    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img", "figure img"):
+    for sel in ("div#sample-image-box img", "img.sample-box__img", "li.sample-box__item img", "figure img"):  
         for img in soup.select(sel):
             src = img.get("data-original") or img.get("src")
             if src and src not in imgs:
                 imgs.append(src)
         if imgs:
             break
-    if not imgs:
-        og_img = soup.find("meta", property="og:image")
-        if og_img and og_img.get("content"):
-            imgs.append(og_img["content"].strip())
+    if not imgs and soup.find("meta", property="og:image"):
+        imgs.append(soup.find("meta", property="og:image")["content"].strip())
 
     print(f"DEBUG: scrape_detail for {url} yielded {len(imgs)} images")
     return title, desc, imgs
