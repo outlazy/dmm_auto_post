@@ -64,67 +64,32 @@ from requests.exceptions import HTTPError
 
 def fetch_latest_videos() -> list[dict]:
     """
-    Fetch latest amateur gyaru videos via Affiliate API using floorList (service=digital) and ItemList.
+    Scrape latest amateur gyaru videos from HTML genre page: https://video.dmm.co.jp/amateur/list/?genre=8503
     """
-    # 1) Get floorId for digital service, floorName 'Amateur'
-    fl_url = "https://api.dmm.com/affiliate/v3/floorList"
-    fl_params = {
-        "api_id":       API_ID,
-        "affiliate_id": AFF_ID,
-        "site":         "video",
-        "service":      "digital",
-        "output":       "json",
-    }
+    GENRE_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503"
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0"})
+    session.cookies.set("ckcy","1",domain=".dmm.co.jp")
     try:
-        fl_resp = requests.get(fl_url, params=fl_params, timeout=10)
-        fl_resp.raise_for_status()
-        floors = fl_resp.json().get("result", {}).get("floor", [])
-        floor_id = None
-        for f in floors:
-            # Identify the Amateur floor (floorName may match 'Amateur')
-            if f.get("floorName", "").lower().startswith("amateur"):
-                floor_id = f.get("floorId")
-                break
+        resp = session.get(GENRE_URL, timeout=10)
+        resp.raise_for_status()
     except Exception as e:
-        print(f"DEBUG: floorList API failed: {e}")
+        print(f"DEBUG: HTML fetch failed: {e}")
         return []
-    if not floor_id:
-        print("DEBUG: No 'Amateur' floorId found; floors available:", [f.get('floorName') for f in floors])
-        return []
-    # 2) Fetch ItemList using floorId under digital service
-    il_url = ITEM_LIST_URL
-    il_params = {
-        "api_id":       API_ID,
-        "affiliate_id": AFF_ID,
-        "site":         "video",
-        "service":      "digital",
-        "floorId":      floor_id,
-        "hits":         LIST_PARAMS.get("hits", 20),
-        "sort":         LIST_PARAMS.get("sort", "date"),
-        "output":       LIST_PARAMS.get("output", "json"),
-    }
-    try:
-        il_resp = requests.get(il_url, params=il_params, timeout=10)
-        il_resp.raise_for_status()
-        items = il_resp.json().get("result", {}).get("items", [])
-    except Exception as e:
-        print(f"DEBUG: ItemList API failed: {e}")
-        return []
-    # 3) Filter by genre 8503 and limit
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(resp.text, "html.parser")
     videos = []
-    for item in items:
-        genres = item.get("genre", [])
-        if not any(g.get("genreId") == GENRE_TARGET_ID for g in genres):
+    for li in soup.select("li.list-box")[:MAX_POST]:
+        a = li.find("a", class_="tmb")
+        if not a or not a.get("href"):
             continue
-        videos.append({
-            "title":       item.get("title", "No Title"),
-            "detail_url":  item.get("URL"),
-            "description": item.get("description", ""),
-            "cid":         item.get("content_id") or item.get("cid"),
-        })
-        if len(videos) >= MAX_POST:
-            break
-    print(f"DEBUG: API returned {len(videos)} videos after floor(digital)+genre filter")
+        href = a["href"]
+        detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
+        title = a.img.get("alt","").strip() if a.img and a.img.get("alt") else (a.get("title") or li.find("p", class_="title").get_text(strip=True))
+        # extract cid
+        cid = detail_url.rstrip('/').split('/')[-1]
+        videos.append({"title": title, "detail_url": detail_url, "cid": cid, "description": ""})
+    print(f"DEBUG: HTML scraping returned {len(videos)} items from genre page")
     return videos
 
 # Fetch sample images via Affiliate ItemDetail API
