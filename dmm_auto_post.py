@@ -15,14 +15,19 @@ from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
+# -- 各種ワード設定 --
+SIRUTO_KEYWORDS = ["素人", "ナンパ", "投稿", "ハメ撮り", "初撮", "自撮り"]
+NG_WORDS = ["デビュー", "専属", "女優", "企画", "S1", "MOODYZ", "アイポケ", "kawaii", "専属"]
+
+# -- 設定・API --
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
 WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 API_ID     = os.getenv("DMM_API_ID")
-MAX_CHECK  = 30    # 何件チェックするか
-POST_LIMIT = 1     # 投稿数
+MAX_CHECK  = 30    # 最大チェック件数
+POST_LIMIT = 1     # 投稿件数
 
 ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
 DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
@@ -36,6 +41,15 @@ def make_affiliate_link(url):
     qs["affiliate_id"] = AFF_ID
     new_query = urlencode(qs)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+
+def is_true_amateur(title, desc):
+    text = (title or "") + " " + (desc or "")
+    # 1つでも素人ワードが含まれ、かつNGワードが含まれない場合のみ採用
+    if not any(w in text for w in SIRUTO_KEYWORDS):
+        return False
+    if any(w in text for w in NG_WORDS):
+        return False
+    return True
 
 def fetch_latest_videos():
     params = {
@@ -57,15 +71,18 @@ def fetch_latest_videos():
     if resp.status_code == 200:
         items = resp.json().get("result", {}).get("items", [])
         for item in items:
-            cid = item.get("content_id") or item.get("cid")
-            detail_url = item.get("URL")
-            videos.append({
-                "title": item.get("title"),
-                "cid": cid,
-                "detail_url": detail_url,
-                "description": item.get("description") or "",
-            })
-        print(f"DEBUG: API got {len(videos)} 素人 items")
+            title = item.get("title") or ""
+            desc = item.get("description") or ""
+            if is_true_amateur(title, desc):
+                cid = item.get("content_id") or item.get("cid")
+                detail_url = item.get("URL")
+                videos.append({
+                    "title": title,
+                    "cid": cid,
+                    "detail_url": detail_url,
+                    "description": desc,
+                })
+        print(f"DEBUG: API filtered {len(videos)} 真・素人 items")
     else:
         print(f"DEBUG: API failed. Body={resp.text[:200]}")
     return videos
