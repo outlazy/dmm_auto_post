@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import os
 import time
 import requests
@@ -12,20 +9,16 @@ from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
-# --- 環境変数ロード ---
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
 WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 API_ID     = os.getenv("DMM_API_ID")
+MAX_POST   = 5
 
-if not all([WP_URL, WP_USER, WP_PASS, AFF_ID, API_ID]):
-    raise Exception("環境変数(.env)が不足しています")
-
-GENRE_URL = "https://video.dmm.co.jp/amateur/list/?genre=8503"
-ITEM_DETAIL_URL = "https://api.dmm.com/affiliate/v3/ItemDetail"
-MAX_POST = 5  # 投稿最大件数
+LIST_API = "https://video.dmm.co.jp/api/v1/amateur/list"
+DETAIL_API = "https://api.dmm.com/affiliate/v3/ItemDetail"
 
 def make_affiliate_link(url):
     parsed = urlparse(url)
@@ -35,30 +28,29 @@ def make_affiliate_link(url):
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
 def fetch_latest_videos():
-    """DMM素人ギャルジャンル最新リストをHTMLスクレイピングで取得"""
-    session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0"})
-    session.cookies.set("ckcy", "1", domain=".dmm.co.jp")
-    resp = session.get(GENRE_URL, timeout=10)
+    params = {
+        "genre": "8503",
+        "sort": "date",
+        "offset": 1,
+        "limit": MAX_POST,
+    }
+    resp = requests.get(LIST_API, params=params, timeout=10)
     resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    data = resp.json()
     videos = []
-    # 最新の構造対応
-    for anchor in soup.select('a[class*="-thum-link"]')[:MAX_POST]:
-        detail_url = anchor["href"] if anchor["href"].startswith("http") else f"https://video.dmm.co.jp{anchor['href']}"
-        title = anchor.get("title") or anchor.img.get("alt", "").strip() if anchor.img else "No Title"
-        cid = detail_url.rstrip('/').split('/')[-1]
+    for item in data.get("contents", []):
+        cid = item.get("cid")
+        detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
         videos.append({
-            "title": title,
-            "detail_url": detail_url,
+            "title": item.get("title"),
             "cid": cid,
-            "description": "",
+            "detail_url": detail_url,
+            "description": item.get("description") or "",
         })
-    print(f"DEBUG: HTML scraping found {len(videos)} items")
+    print(f"DEBUG: DMM API scraping found {len(videos)} items")
     return videos
 
 def fetch_sample_images(cid):
-    """APIでサンプル画像(large)を取得"""
     params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
@@ -67,7 +59,7 @@ def fetch_sample_images(cid):
         "item": cid,
         "output": "json",
     }
-    resp = requests.get(ITEM_DETAIL_URL, params=params, timeout=10)
+    resp = requests.get(DETAIL_API, params=params, timeout=10)
     try:
         resp.raise_for_status()
         items = resp.json().get("result", {}).get("items", [])
@@ -104,12 +96,10 @@ def create_wp_post(video):
     thumb_id = upload_image(wp, images[0])
     aff = make_affiliate_link(video["detail_url"])
     parts = []
-    # アイキャッチ画像＋アフィリリンク
     parts.append(f'<p><a href="{aff}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
     if video.get("description"):
         parts.append(f'<div>{video["description"]}</div>')
-    # サンプル画像（2枚目以降）
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
