@@ -12,6 +12,7 @@ from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
+# ---- 環境変数ロード（.env推奨） ----
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
 WP_USER    = os.getenv("WP_USER")
@@ -20,7 +21,7 @@ AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 API_ID     = os.getenv("DMM_API_ID")
 MAX_POST   = 5
 
-LIST_API = "https://video.dmm.co.jp/api/v1/amateur/list"
+LIST_API   = "https://video.dmm.co.jp/api/v1/amateur/list"
 DETAIL_API = "https://api.dmm.com/affiliate/v3/ItemDetail"
 GENRE_HTML = "https://video.dmm.co.jp/amateur/list/?genre=8503"
 
@@ -32,8 +33,7 @@ def make_affiliate_link(url):
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
 def fetch_latest_videos():
-    """API優先・HTML fallback方式で動画リスト取得"""
-    # 1. API方式（推奨、だめならHTML fallback）
+    """API優先・HTML fallback。API空返しならbody内容もprintしてデバッグ容易化"""
     params = {
         "genre": "8503",
         "sort": "date",
@@ -45,6 +45,8 @@ def fetch_latest_videos():
     try:
         resp = session.get(LIST_API, params=params, timeout=10)
         print(f"DEBUG: API status={resp.status_code}")
+        print(f"DEBUG: API url={resp.url}")
+        print(f"DEBUG: API body head={resp.text[:300]}")  # ← ここ重要
         if resp.status_code == 200:
             try:
                 data = resp.json()
@@ -61,6 +63,8 @@ def fetch_latest_videos():
                         })
                     print(f"DEBUG: DMM API scraping found {len(videos)} items")
                     return videos
+                else:
+                    print(f"DEBUG: API contents is empty or missing")
             except Exception as e:
                 print(f"DEBUG: API JSON decode failed: {e}")
         else:
@@ -68,30 +72,31 @@ def fetch_latest_videos():
     except Exception as e:
         print(f"DEBUG: API request error: {e}")
 
-    # 2. HTML fallback（SPA構造対応。初回ロード時のスニペットJSON抽出）
+    # ---- HTML fallback (Next.jsページ用: __NEXT_DATA__ JSON埋め込み対応) ----
     print("DEBUG: Falling back to HTML parsing.")
     videos = []
     try:
         resp = session.get(GENRE_HTML, timeout=10)
         soup = BeautifulSoup(resp.text, "html.parser")
-        # Next.js埋め込みスクリプトからJSON部分を抽出
         for script in soup.find_all("script"):
-            if "__NEXT_DATA__" in (script.get("id") or ""):
+            if script.get("id") == "__NEXT_DATA__":
                 import json
-                data = json.loads(script.string)
-                # データ構造は変動あり、各自で適宜調整！
-                items = (data.get("props", {}).get("pageProps", {}).get("contents", []) or
-                         data.get("props", {}).get("pageProps", {}).get("videos", []))
-                for item in items[:MAX_POST]:
-                    cid = item.get("cid")
-                    detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
-                    videos.append({
-                        "title": item.get("title"),
-                        "cid": cid,
-                        "detail_url": detail_url,
-                        "description": item.get("description") or "",
-                    })
-                print(f"DEBUG: HTML fallback found {len(videos)} items")
+                try:
+                    data = json.loads(script.string)
+                    items = (data.get("props", {}).get("pageProps", {}).get("contents", [])
+                             or data.get("props", {}).get("pageProps", {}).get("videos", []))
+                    for item in items[:MAX_POST]:
+                        cid = item.get("cid")
+                        detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
+                        videos.append({
+                            "title": item.get("title"),
+                            "cid": cid,
+                            "detail_url": detail_url,
+                            "description": item.get("description") or "",
+                        })
+                    print(f"DEBUG: HTML fallback found {len(videos)} items")
+                except Exception as e:
+                    print(f"DEBUG: __NEXT_DATA__ parse failed: {e}")
                 break
     except Exception as e:
         print(f"DEBUG: HTML fallback failed: {e}")
