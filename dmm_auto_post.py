@@ -12,13 +12,17 @@ from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+
 # === 設定 ===
 WP_CATEGORY = "DMM素人動画"
 WP_TAGS = []
-
 BASE_URL = "https://video.dmm.co.jp"
 LIST_URL = BASE_URL + "/amateur/list/?sort=date"
 MAX_POST = 5
+SELENIUM_WAIT = 7  # 秒
 
 # .envからWordPress情報取得
 load_dotenv()
@@ -28,6 +32,8 @@ WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 
 def make_affiliate_link(detail_url):
+    if not AFF_ID:
+        return detail_url
     if "affiliate_id" in detail_url:
         return detail_url
     delim = "&" if "?" in detail_url else "?"
@@ -41,9 +47,20 @@ def is_released(release_date_str):
     except:
         return False
 
-def fetch_video_list():
-    resp = requests.get(LIST_URL, timeout=15)
-    soup = BeautifulSoup(resp.text, "html.parser")
+def fetch_video_list_selenium():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    driver = webdriver.Chrome(options=chrome_options)
+
+    driver.get(LIST_URL)
+    time.sleep(SELENIUM_WAIT)  # 動的生成完了まで十分待つ
+
+    html = driver.page_source
+    driver.quit()
+
+    soup = BeautifulSoup(html, "html.parser")
     items = []
     for box in soup.select("li.list-box"):
         a_tag = box.select_one("a")
@@ -59,6 +76,7 @@ def fetch_video_list():
         if not (title and detail_url and rel_date):
             continue
         items.append({"title": title, "detail_url": detail_url, "release_date": rel_date})
+    print(f"DEBUG: video items found: {len(items)}")
     return items
 
 def fetch_video_detail(detail_url):
@@ -121,7 +139,11 @@ def create_wp_post(wp, video, images, desc):
 
 def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    videos = fetch_video_list()
+    videos = fetch_video_list_selenium()
+    if not videos:
+        print("No new videos to post.")
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
+        return
     wp = Client(WP_URL, WP_USER, WP_PASS)
     count = 0
     for video in videos:
