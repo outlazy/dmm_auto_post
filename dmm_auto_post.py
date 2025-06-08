@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+# Python3.10以降の "collections.Iterable" バグ対策
+import collections
+import collections.abc
+collections.Iterable = collections.abc.Iterable
+
 import os
 import time
 import requests
