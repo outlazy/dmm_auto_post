@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Python3.10以降の "collections.Iterable" バグ対策
 import collections
 import collections.abc
 collections.Iterable = collections.abc.Iterable
@@ -23,7 +22,8 @@ WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 API_ID     = os.getenv("DMM_API_ID")
-MAX_POST   = 5
+MAX_CHECK  = 30    # リストAPIで何件チェックするか（増やすと画像付き発売済み商品が見つかりやすい）
+POST_LIMIT = 1     # 投稿する新規商品の最大数（毎回1つで良いなら1、まとめて最大N件投稿もOK）
 
 ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
 DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
@@ -45,7 +45,7 @@ def fetch_latest_videos():
         "service":      "digital",
         "floor_id":     FLOOR_ID,
         "genre_id":     GENRE_ID,
-        "hits":         MAX_POST,
+        "hits":         MAX_CHECK,
         "sort":         "date",
         "output":       "json",
         "availability": "1",  # 発売済のみ
@@ -65,7 +65,7 @@ def fetch_latest_videos():
                 "detail_url": detail_url,
                 "description": item.get("description") or "",
             })
-        print(f"DEBUG: FANZA API found {len(videos)} items")
+        print(f"DEBUG: FANZA API got {len(videos)} items")
     else:
         print(f"DEBUG: FANZA API failed. Body={resp.text[:200]}")
     return videos
@@ -103,16 +103,11 @@ def upload_image(wp, url):
     res = wp.call(media.UploadFile(media_data))
     return res.get("id")
 
-def create_wp_post(video):
-    wp = Client(WP_URL, WP_USER, WP_PASS)
+def create_wp_post(wp, video, images):
     title = video["title"]
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if any(p.title == title for p in existing):
         print(f"→ Skipping duplicate: {title}")
-        return False
-    images = fetch_sample_images(video["cid"])
-    if not images:
-        print(f"→ No samples for: {title}, skipping.")
         return False
     thumb_id = upload_image(wp, images[0])
     aff = make_affiliate_link(video["detail_url"])
@@ -137,10 +132,18 @@ def create_wp_post(video):
 def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
     videos = fetch_latest_videos()
+    wp = Client(WP_URL, WP_USER, WP_PASS)
+    post_count = 0
     for video in videos:
-        if create_wp_post(video):
+        images = fetch_sample_images(video["cid"])
+        if not images:
+            print(f"→ No samples for: {video['title']}, skipping.")
+            continue
+        if create_wp_post(wp, video, images):
+            post_count += 1
+        if post_count >= POST_LIMIT:
             break
-    else:
+    if post_count == 0:
         print("No new videos to post.")
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
 
