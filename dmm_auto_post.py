@@ -4,9 +4,29 @@
 import sys
 import os
 import time
+from datetime import datetime
+
+# --- 必要パッケージを自動インストール ---
+def pip_install(packages):
+    import subprocess
+    import sys
+    for pkg in packages:
+        try:
+            __import__(pkg)
+        except ImportError:
+            print(f"\n【INFO】{pkg}未導入のためpip install {pkg} を自動実行します")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+
+pip_install([
+    "selenium",
+    "bs4",
+    "requests",
+    "python-dotenv",
+    "python_wordpress_xmlrpc"
+])
+
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
 from dotenv import load_dotenv
 
 # --- Selenium案内 ---
