@@ -5,7 +5,6 @@ import os
 import time
 import requests
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
-from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
@@ -21,9 +20,10 @@ AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 API_ID     = os.getenv("DMM_API_ID")
 MAX_POST   = 5
 
-LIST_API   = "https://video.dmm.co.jp/api/v1/amateur/list"
-DETAIL_API = "https://api.dmm.com/affiliate/v3/ItemDetail"
-GENRE_HTML = "https://video.dmm.co.jp/amateur/list/?genre=8503"
+ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
+DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
+GENRE_ID     = "8503"     # ギャル
+FLOOR_ID     = "videoa"   # アダルト動画
 
 def make_affiliate_link(url):
     parsed = urlparse(url)
@@ -33,82 +33,46 @@ def make_affiliate_link(url):
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
 def fetch_latest_videos():
-    """API優先・HTML fallback。API空返しならbody内容もprintしてデバッグ容易化"""
     params = {
-        "genre": "8503",
-        "sort": "date",
-        "offset": 1,
-        "limit": MAX_POST,
+        "api_id":       API_ID,
+        "affiliate_id": AFF_ID,
+        "site":         "FANZA",
+        "service":      "digital",
+        "floor_id":     FLOOR_ID,
+        "genre_id":     GENRE_ID,
+        "hits":         MAX_POST,
+        "sort":         "date",
+        "output":       "json",
+        "availability": "1",  # 発売済のみ
     }
-    session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0"})
-    try:
-        resp = session.get(LIST_API, params=params, timeout=10)
-        print(f"DEBUG: API status={resp.status_code}")
-        print(f"DEBUG: API url={resp.url}")
-        print(f"DEBUG: API body head={resp.text[:300]}")  # ← ここ重要
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-                if data.get("contents"):
-                    videos = []
-                    for item in data.get("contents", []):
-                        cid = item.get("cid")
-                        detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
-                        videos.append({
-                            "title": item.get("title"),
-                            "cid": cid,
-                            "detail_url": detail_url,
-                            "description": item.get("description") or "",
-                        })
-                    print(f"DEBUG: DMM API scraping found {len(videos)} items")
-                    return videos
-                else:
-                    print(f"DEBUG: API contents is empty or missing")
-            except Exception as e:
-                print(f"DEBUG: API JSON decode failed: {e}")
-        else:
-            print(f"DEBUG: API failed status={resp.status_code}")
-    except Exception as e:
-        print(f"DEBUG: API request error: {e}")
-
-    # ---- HTML fallback (Next.jsページ用: __NEXT_DATA__ JSON埋め込み対応) ----
-    print("DEBUG: Falling back to HTML parsing.")
+    resp = requests.get(ITEMLIST_API, params=params, timeout=10)
+    print(f"DEBUG: FANZA API status={resp.status_code}")
+    print(f"DEBUG: FANZA API url={resp.url}")
     videos = []
-    try:
-        resp = session.get(GENRE_HTML, timeout=10)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        for script in soup.find_all("script"):
-            if script.get("id") == "__NEXT_DATA__":
-                import json
-                try:
-                    data = json.loads(script.string)
-                    items = (data.get("props", {}).get("pageProps", {}).get("contents", [])
-                             or data.get("props", {}).get("pageProps", {}).get("videos", []))
-                    for item in items[:MAX_POST]:
-                        cid = item.get("cid")
-                        detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
-                        videos.append({
-                            "title": item.get("title"),
-                            "cid": cid,
-                            "detail_url": detail_url,
-                            "description": item.get("description") or "",
-                        })
-                    print(f"DEBUG: HTML fallback found {len(videos)} items")
-                except Exception as e:
-                    print(f"DEBUG: __NEXT_DATA__ parse failed: {e}")
-                break
-    except Exception as e:
-        print(f"DEBUG: HTML fallback failed: {e}")
+    if resp.status_code == 200:
+        items = resp.json().get("result", {}).get("items", [])
+        for item in items:
+            cid = item.get("content_id") or item.get("cid")
+            detail_url = item.get("URL")
+            videos.append({
+                "title": item.get("title"),
+                "cid": cid,
+                "detail_url": detail_url,
+                "description": item.get("description") or "",
+            })
+        print(f"DEBUG: FANZA API found {len(videos)} items")
+    else:
+        print(f"DEBUG: FANZA API failed. Body={resp.text[:200]}")
     return videos
 
 def fetch_sample_images(cid):
     params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
-        "site": "video",
-        "service": "amateur",
-        "item": cid,
+        "site": "FANZA",
+        "service": "digital",
+        "floor_id": FLOOR_ID,
+        "cid": cid,
         "output": "json",
     }
     resp = requests.get(DETAIL_API, params=params, timeout=10)
