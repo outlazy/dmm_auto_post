@@ -9,20 +9,21 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from dotenv import load_dotenv
 
-# ========== Selenium & chromedriverチェック ==========
+# === Selenium（未導入時は案内&終了） ===
 try:
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
 except ImportError:
-    print("【ERROR】seleniumがインストールされていません。下記コマンドを先に実行してください：\n  pip install selenium")
+    print("\n【ERROR】seleniumがインストールされていません。下記コマンドで先に導入してください：\n  pip install selenium\n")
     sys.exit(1)
+
 try:
     _ = webdriver.Chrome
 except Exception as e:
-    print("【ERROR】chromedriverが見つかりません。Chromeのバージョンに合わせて導入・パス設定してください。")
-    print("  Linux: sudo apt install chromium-chromedriver")
-    print("  Mac: brew install chromedriver")
-    print("  Windows: 公式 https://chromedriver.chromium.org/downloads")
+    print("\n【ERROR】chromedriverが見つかりません。Chromeバージョンに合うchromedriverをパスに追加してください。\n"
+          "  Linux: sudo apt install chromium-chromedriver\n"
+          "  Mac: brew install chromedriver\n"
+          "  Windows: 公式 https://chromedriver.chromium.org/downloads から取得し、パスを通してください\n")
     sys.exit(1)
 
 try:
@@ -31,17 +32,16 @@ try:
     from wordpress_xmlrpc.methods.posts import GetPosts
     from wordpress_xmlrpc.compat import xmlrpc_client
 except ImportError:
-    print("【ERROR】python-wordpress-xmlrpcがインストールされていません。")
-    print("  pip install python-wordpress-xmlrpc")
+    print("\n【ERROR】python-wordpress-xmlrpcがインストールされていません。\n  pip install python-wordpress-xmlrpc\n")
     sys.exit(1)
 
-# ========== 設定 ==========
+# === 設定 ===
 WP_CATEGORY = "DMM素人動画"
 WP_TAGS = []
 BASE_URL = "https://video.dmm.co.jp"
 LIST_URL = BASE_URL + "/amateur/list/?sort=date"
-MAX_POST = 5
-SELENIUM_WAIT = 7
+MAX_POST = 3
+SELENIUM_WAIT = 8  # 秒
 
 # .envからWordPress情報とDMMアフィリエイトIDを取得
 load_dotenv()
@@ -82,7 +82,7 @@ def fetch_video_list_selenium():
         a_tag = box.select_one("a")
         if not a_tag:
             continue
-        href = a_tag["href"]
+        href = a_tag.get("href", "")
         detail_url = BASE_URL + href if href.startswith("/") else href
         title = (box.select_one(".list-box__title") or {}).get_text(strip=True)
         date_tag = box.select_one(".list-box__release-date")
