@@ -15,20 +15,17 @@ from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
-# ---- 環境変数ロード（.env推奨） ----
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
 WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 API_ID     = os.getenv("DMM_API_ID")
-MAX_CHECK  = 30    # リストAPIで何件チェックするか（増やすと画像付き発売済み商品が見つかりやすい）
-POST_LIMIT = 1     # 投稿する新規商品の最大数（毎回1つで良いなら1、まとめて最大N件投稿もOK）
+MAX_CHECK  = 30    # 何件チェックするか
+POST_LIMIT = 1     # 投稿数
 
 ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
 DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
-GENRE_ID     = "8503"     # ギャル
-FLOOR_ID     = "videoa"   # アダルト動画
 
 def make_affiliate_link(url):
     parsed = urlparse(url)
@@ -42,30 +39,31 @@ def fetch_latest_videos():
         "api_id":       API_ID,
         "affiliate_id": AFF_ID,
         "site":         "FANZA",
-        "service":      "digital",
-        "floor_id":     FLOOR_ID,
-        "genre_id":     GENRE_ID,
+        "service":      "amateur",
+        "floor_id":     "amateur",
         "hits":         MAX_CHECK,
         "sort":         "date",
         "output":       "json",
         "availability": "1",  # 発売済のみ
     }
     resp = requests.get(ITEMLIST_API, params=params, timeout=10)
-    print(f"DEBUG: FANZA API status={resp.status_code}")
-    print(f"DEBUG: FANZA API url={resp.url}")
+    print(f"DEBUG: FANZA amateur API status={resp.status_code}")
+    print(f"DEBUG: FANZA amateur API url={resp.url}")
     videos = []
     if resp.status_code == 200:
         items = resp.json().get("result", {}).get("items", [])
         for item in items:
-            cid = item.get("content_id") or item.get("cid")
-            detail_url = item.get("URL")
-            videos.append({
-                "title": item.get("title"),
-                "cid": cid,
-                "detail_url": detail_url,
-                "description": item.get("description") or "",
-            })
-        print(f"DEBUG: FANZA API got {len(videos)} items")
+            # タイトル・説明に"ギャル"を含むものだけにフィルタ
+            if "ギャル" in (item.get("title") or "") or "ギャル" in (item.get("description") or ""):
+                cid = item.get("content_id") or item.get("cid")
+                detail_url = item.get("URL")
+                videos.append({
+                    "title": item.get("title"),
+                    "cid": cid,
+                    "detail_url": detail_url,
+                    "description": item.get("description") or "",
+                })
+        print(f"DEBUG: FANZA amateur filtered {len(videos)} ギャル素人 items")
     else:
         print(f"DEBUG: FANZA API failed. Body={resp.text[:200]}")
     return videos
@@ -75,8 +73,8 @@ def fetch_sample_images(cid):
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
         "site": "FANZA",
-        "service": "digital",
-        "floor_id": FLOOR_ID,
+        "service": "amateur",
+        "floor_id": "amateur",
         "cid": cid,
         "output": "json",
     }
@@ -123,7 +121,7 @@ def create_wp_post(wp, video, images):
     post.title = title
     post.content = "\n".join(parts)
     post.thumbnail = thumb_id
-    post.terms_names = {"category": ["DMM動画"], "post_tag": []}
+    post.terms_names = {"category": ["DMM素人動画"], "post_tag": []}
     post.post_status = "publish"
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {title}")
