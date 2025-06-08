@@ -27,6 +27,10 @@ POST_LIMIT = 1     # 投稿数
 ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
 DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
 
+# ▼ ここが素人ジャンルID
+GENRE_ID = "5026"     # 素人
+FLOOR_ID = "amateur"  # 素人動画
+
 def make_affiliate_link(url):
     parsed = urlparse(url)
     qs = dict(parse_qsl(parsed.query))
@@ -39,21 +43,22 @@ def fetch_latest_videos():
         "api_id":       API_ID,
         "affiliate_id": AFF_ID,
         "site":         "FANZA",
-        "service":      "amateur",
-        "floor_id":     "amateur",
+        "service":      "videoa",     # ← ここ重要
+        "floor_id":     FLOOR_ID,
+        "genre_id":     GENRE_ID,
         "hits":         MAX_CHECK,
         "sort":         "date",
         "output":       "json",
         "availability": "1",  # 発売済のみ
     }
     resp = requests.get(ITEMLIST_API, params=params, timeout=10)
-    print(f"DEBUG: FANZA amateur API status={resp.status_code}")
-    print(f"DEBUG: FANZA amateur API url={resp.url}")
+    print(f"DEBUG: API status={resp.status_code}")
+    print(f"DEBUG: API url={resp.url}")
     videos = []
     if resp.status_code == 200:
         items = resp.json().get("result", {}).get("items", [])
         for item in items:
-            # タイトル・説明に"ギャル"を含むものだけにフィルタ
+            # タイトルor説明に「ギャル」を含むものだけフィルタ
             if "ギャル" in (item.get("title") or "") or "ギャル" in (item.get("description") or ""):
                 cid = item.get("content_id") or item.get("cid")
                 detail_url = item.get("URL")
@@ -63,9 +68,9 @@ def fetch_latest_videos():
                     "detail_url": detail_url,
                     "description": item.get("description") or "",
                 })
-        print(f"DEBUG: FANZA amateur filtered {len(videos)} ギャル素人 items")
+        print(f"DEBUG: API filtered {len(videos)} ギャル素人 items")
     else:
-        print(f"DEBUG: FANZA API failed. Body={resp.text[:200]}")
+        print(f"DEBUG: API failed. Body={resp.text[:200]}")
     return videos
 
 def fetch_sample_images(cid):
@@ -73,8 +78,8 @@ def fetch_sample_images(cid):
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
         "site": "FANZA",
-        "service": "amateur",
-        "floor_id": "amateur",
+        "service": "videoa",
+        "floor_id": FLOOR_ID,
         "cid": cid,
         "output": "json",
     }
