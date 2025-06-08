@@ -15,6 +15,9 @@ from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
+# 除外ワード（タイトルや説明にこれらが含まれるとスキップ）
+RESERVE_WORDS = ["予約", "発売前", "予約受付中"]
+
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
 WP_USER    = os.getenv("WP_USER")
@@ -37,6 +40,10 @@ def make_affiliate_link(url):
     new_query = urlencode(qs)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
+def is_reserved(title, desc):
+    text = (title or "") + " " + (desc or "")
+    return any(w in text for w in RESERVE_WORDS)
+
 def fetch_latest_videos():
     params = {
         "api_id":       API_ID,
@@ -57,15 +64,20 @@ def fetch_latest_videos():
     if resp.status_code == 200:
         items = resp.json().get("result", {}).get("items", [])
         for item in items:
+            title = item.get("title") or ""
+            desc = item.get("description") or ""
+            if is_reserved(title, desc):
+                print(f"→ Skipping reserved: {title}")
+                continue
             cid = item.get("content_id") or item.get("cid")
             detail_url = item.get("URL")
             videos.append({
-                "title": item.get("title"),
+                "title": title,
                 "cid": cid,
                 "detail_url": detail_url,
-                "description": item.get("description") or "",
+                "description": desc,
             })
-        print(f"DEBUG: API got {len(videos)} 素人 items")
+        print(f"DEBUG: API got {len(videos)} 素人（予約除外） items")
     else:
         print(f"DEBUG: API failed. Body={resp.text[:200]}")
     return videos
