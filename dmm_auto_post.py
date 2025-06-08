@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 import time
 import requests
@@ -19,6 +22,7 @@ MAX_POST   = 5
 
 LIST_API = "https://video.dmm.co.jp/api/v1/amateur/list"
 DETAIL_API = "https://api.dmm.com/affiliate/v3/ItemDetail"
+GENRE_HTML = "https://video.dmm.co.jp/amateur/list/?genre=8503"
 
 def make_affiliate_link(url):
     parsed = urlparse(url)
@@ -28,26 +32,69 @@ def make_affiliate_link(url):
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
 def fetch_latest_videos():
+    """API優先・HTML fallback方式で動画リスト取得"""
+    # 1. API方式（推奨、だめならHTML fallback）
     params = {
         "genre": "8503",
         "sort": "date",
         "offset": 1,
         "limit": MAX_POST,
     }
-    resp = requests.get(LIST_API, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0"})
+    try:
+        resp = session.get(LIST_API, params=params, timeout=10)
+        print(f"DEBUG: API status={resp.status_code}")
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+                if data.get("contents"):
+                    videos = []
+                    for item in data.get("contents", []):
+                        cid = item.get("cid")
+                        detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
+                        videos.append({
+                            "title": item.get("title"),
+                            "cid": cid,
+                            "detail_url": detail_url,
+                            "description": item.get("description") or "",
+                        })
+                    print(f"DEBUG: DMM API scraping found {len(videos)} items")
+                    return videos
+            except Exception as e:
+                print(f"DEBUG: API JSON decode failed: {e}")
+        else:
+            print(f"DEBUG: API failed status={resp.status_code}")
+    except Exception as e:
+        print(f"DEBUG: API request error: {e}")
+
+    # 2. HTML fallback（SPA構造対応。初回ロード時のスニペットJSON抽出）
+    print("DEBUG: Falling back to HTML parsing.")
     videos = []
-    for item in data.get("contents", []):
-        cid = item.get("cid")
-        detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
-        videos.append({
-            "title": item.get("title"),
-            "cid": cid,
-            "detail_url": detail_url,
-            "description": item.get("description") or "",
-        })
-    print(f"DEBUG: DMM API scraping found {len(videos)} items")
+    try:
+        resp = session.get(GENRE_HTML, timeout=10)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        # Next.js埋め込みスクリプトからJSON部分を抽出
+        for script in soup.find_all("script"):
+            if "__NEXT_DATA__" in (script.get("id") or ""):
+                import json
+                data = json.loads(script.string)
+                # データ構造は変動あり、各自で適宜調整！
+                items = (data.get("props", {}).get("pageProps", {}).get("contents", []) or
+                         data.get("props", {}).get("pageProps", {}).get("videos", []))
+                for item in items[:MAX_POST]:
+                    cid = item.get("cid")
+                    detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
+                    videos.append({
+                        "title": item.get("title"),
+                        "cid": cid,
+                        "detail_url": detail_url,
+                        "description": item.get("description") or "",
+                    })
+                print(f"DEBUG: HTML fallback found {len(videos)} items")
+                break
+    except Exception as e:
+        print(f"DEBUG: HTML fallback failed: {e}")
     return videos
 
 def fetch_sample_images(cid):
