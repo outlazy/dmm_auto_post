@@ -1,8 +1,19 @@
 import sys, subprocess, os, time, re
-# pip自動
-for pkg in ["selenium", "python-dotenv", "python_wordpress_xmlrpc", "beautifulsoup4", "requests"]:
-    try: __import__(pkg.replace("-", "_"))
-    except ImportError: subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+
+# 必要pip自動インストール
+pkgs = [
+    ("selenium", "selenium"),
+    ("dotenv", "python-dotenv"),
+    ("bs4", "beautifulsoup4"),
+    ("requests", "requests"),
+    ("python_wordpress_xmlrpc", "python_wordpress_xmlrpc")
+]
+for mod, pipname in pkgs:
+    try:
+        __import__(mod)
+    except ImportError:
+        print(f"[INFO] installing {pipname} ...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pipname])
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -14,19 +25,23 @@ from python_wordpress_xmlrpc.methods.media import UploadFile
 from python_wordpress_xmlrpc.compat import xmlrpc_client
 import requests
 
+# --- .env 読み込み ---
 load_dotenv()
 WP_URL = os.getenv("WP_URL")
 WP_USER = os.getenv("WP_USER")
 WP_PASS = os.getenv("WP_PASS")
 AFF_ID = os.getenv("AFF_ID", "dmm_affiliate-xxxx")
 LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=79015"
-MAX_POSTS = 3  # 何件投稿するか
+MAX_POSTS = 3  # 投稿件数
 
 def get_driver():
     opts = Options()
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
+    # ChromeDriver自動DLも可、必要なら↓コメント解除
+    # from webdriver_manager.chrome import ChromeDriverManager
+    # return webdriver.Chrome(ChromeDriverManager().install(), options=opts)
     return webdriver.Chrome(options=opts)
 
 def get_video_links():
@@ -62,7 +77,6 @@ def fetch_and_post(detail_url, wp):
     time.sleep(2)
     soup = BeautifulSoup(driver.page_source, "html.parser")
     driver.quit()
-    # タイトル
     title = soup.find("title").text.split(" - ")[0].strip()
     # サンプル画像
     sample_imgs = []
@@ -72,39 +86,30 @@ def fetch_and_post(detail_url, wp):
             img = a.find("img")
             if img and img.get("src"):
                 sample_imgs.append(img["src"] if img["src"].startswith("http") else "https:" + img["src"])
-    # 本文
     desc_block = soup.find("div", class_="mg-b20 lh4")
     desc = desc_block.text.strip() if desc_block else ""
-    # ラベル
     label = ""
     for tr in soup.find_all("tr"):
         th = tr.find("td", class_="nw")
         if th and "レーベル" in th.text: label = tr.find_all("td")[-1].text.strip()
-    # ジャンル
     genres = []
     for tr in soup.find_all("tr"):
         th = tr.find("td", class_="nw")
         if th and "ジャンル" in th.text:
             genres = [g.text.strip() for g in tr.find_all("a")]
-    # 名前
     name = ""
     for tr in soup.find_all("tr"):
         th = tr.find("td", class_="nw")
         if th and "名前" in th.text: name = tr.find_all("td")[-1].text.strip()
-    # アフィリエイトリンク
     m = re.search(r'/cid=([^/]+)/', detail_url)
     cid = m.group(1) if m else ""
     aff_url = f"https://al.dmm.co.jp/?lurl={detail_url}&af_id={AFF_ID}&ch=01&ch_id=link"
-    # WordPress本文
     content = f'<p><a href="{aff_url}"><img src="{sample_imgs[0]}" alt="{title}"></a></p>' if sample_imgs else ""
     content += f'<p>{desc}</p>'
     content += f'<p><a href="{aff_url}">公式ページで見る</a></p>'
-    # タグ
     tags = list(set([label] + genres + ([name] if name else [])))
-    # 投稿済み重複チェック
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if existing: print(f"→ Skipping duplicate: {title}"); return False
-    # WP投稿
     post = WordPressPost()
     post.title = title
     post.content = content
