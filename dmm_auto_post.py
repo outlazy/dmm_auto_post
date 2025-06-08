@@ -27,9 +27,8 @@ POST_LIMIT = 1     # 投稿数
 ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
 DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
 
-# ▼ ここが素人ジャンルID
-GENRE_ID = "5026"     # 素人
-FLOOR_ID = "amateur"  # 素人動画
+GENRE_ID = "5026"     # 素人ジャンルID
+FLOOR_ID = "videoa"   # アダルト動画フロア
 
 def make_affiliate_link(url):
     parsed = urlparse(url)
@@ -43,7 +42,7 @@ def fetch_latest_videos():
         "api_id":       API_ID,
         "affiliate_id": AFF_ID,
         "site":         "FANZA",
-        "service":      "videoa",     # ← ここ重要
+        "service":      "digital",
         "floor_id":     FLOOR_ID,
         "genre_id":     GENRE_ID,
         "hits":         MAX_CHECK,
@@ -58,17 +57,15 @@ def fetch_latest_videos():
     if resp.status_code == 200:
         items = resp.json().get("result", {}).get("items", [])
         for item in items:
-            # タイトルor説明に「ギャル」を含むものだけフィルタ
-            if "ギャル" in (item.get("title") or "") or "ギャル" in (item.get("description") or ""):
-                cid = item.get("content_id") or item.get("cid")
-                detail_url = item.get("URL")
-                videos.append({
-                    "title": item.get("title"),
-                    "cid": cid,
-                    "detail_url": detail_url,
-                    "description": item.get("description") or "",
-                })
-        print(f"DEBUG: API filtered {len(videos)} ギャル素人 items")
+            cid = item.get("content_id") or item.get("cid")
+            detail_url = item.get("URL")
+            videos.append({
+                "title": item.get("title"),
+                "cid": cid,
+                "detail_url": detail_url,
+                "description": item.get("description") or "",
+            })
+        print(f"DEBUG: API got {len(videos)} 素人 items")
     else:
         print(f"DEBUG: API failed. Body={resp.text[:200]}")
     return videos
@@ -78,7 +75,7 @@ def fetch_sample_images(cid):
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
         "site": "FANZA",
-        "service": "videoa",
+        "service": "digital",
         "floor_id": FLOOR_ID,
         "cid": cid,
         "output": "json",
