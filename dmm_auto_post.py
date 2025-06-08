@@ -24,8 +24,8 @@ WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 API_ID     = os.getenv("DMM_API_ID")
-MAX_CHECK  = 30    # 何件チェックするか
-POST_LIMIT = 1     # 投稿数
+MAX_CHECK  = 100    # 直近100件チェック
+POST_LIMIT = 5      # 最大5件投稿
 
 ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
 DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
