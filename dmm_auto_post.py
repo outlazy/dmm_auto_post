@@ -30,8 +30,7 @@ POST_LIMIT = 5      # 投稿上限
 ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
 DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
 
-GENRE_ID = "5026"     # 素人ジャンルID
-FLOOR_ID = "videoa"   # アダルト動画フロア
+FLOOR_ID = "videoa"   # アダルト動画フロア（ジャンル指定なし！）
 
 def make_affiliate_link(url):
     parsed = urlparse(url)
@@ -53,7 +52,7 @@ def fetch_latest_videos():
             "site":         "FANZA",
             "service":      "digital",
             "floor_id":     FLOOR_ID,
-            "genre_id":     GENRE_ID,
+            # "genre_id":   ここは指定しない（広く全ジャンル）
             "hits":         PAGE_HITS,
             "sort":         "date",
             "output":       "json",
@@ -86,7 +85,7 @@ def fetch_latest_videos():
             break
         if len(videos) >= MAX_TOTAL:
             break
-    print(f"DEBUG: API got {len(videos)} 素人（予約除外） items")
+    print(f"DEBUG: API got {len(videos)} 動画 items")
     return videos[:MAX_TOTAL]
 
 def fetch_sample_images(cid):
@@ -142,7 +141,7 @@ def create_wp_post(wp, video, images):
     post.title = title
     post.content = "\n".join(parts)
     post.thumbnail = thumb_id
-    post.terms_names = {"category": ["DMM素人動画"], "post_tag": []}
+    post.terms_names = {"category": ["DMM動画"], "post_tag": []}
     post.post_status = "publish"
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {title}")
