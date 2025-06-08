@@ -1,205 +1,127 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+import sys, subprocess, os, time, re
+# pip自動
+for pkg in ["selenium", "python-dotenv", "python_wordpress_xmlrpc", "beautifulsoup4", "requests"]:
+    try: __import__(pkg.replace("-", "_"))
+    except ImportError: subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
 
-import sys
-import os
-import time
-from datetime import datetime
-
-# --- 必要パッケージを自動インストール ---
-def pip_install(packages):
-    import subprocess
-    import sys
-    for pkg in packages:
-        try:
-            __import__(pkg)
-        except ImportError:
-            print(f"\n【INFO】{pkg}未導入のためpip install {pkg} を自動実行します")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-
-pip_install([
-    "selenium",
-    "bs4",
-    "requests",
-    "python-dotenv",
-    "python_wordpress_xmlrpc"
-])
-
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from python_wordpress_xmlrpc import Client, WordPressPost
+from python_wordpress_xmlrpc.methods.posts import NewPost, GetPosts
+from python_wordpress_xmlrpc.methods.media import UploadFile
+from python_wordpress_xmlrpc.compat import xmlrpc_client
+import requests
 
-# --- Selenium案内 ---
-try:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-except ImportError:
-    print("\n【ERROR】seleniumがインストールされていません。\n  pip install selenium\nを実行してください。")
-    sys.exit(1)
-
-try:
-    _ = webdriver.Chrome
-except Exception:
-    print("\n【ERROR】chromedriverが見つかりません。\nChromeバージョンに合ったchromedriverをパスに追加してください。\n"
-          "  Linux: sudo apt install chromium-chromedriver\n"
-          "  Mac: brew install chromedriver\n"
-          "  Windows: 公式 https://chromedriver.chromium.org/downloads")
-    sys.exit(1)
-
-try:
-    from wordpress_xmlrpc import Client, WordPressPost
-    from wordpress_xmlrpc.methods import media, posts
-    from wordpress_xmlrpc.methods.posts import GetPosts
-    from wordpress_xmlrpc.compat import xmlrpc_client
-except ImportError:
-    print("\n【ERROR】python-wordpress-xmlrpcがインストールされていません。\n  pip install python-wordpress-xmlrpc\nを実行してください。")
-    sys.exit(1)
-
-# === 設定 ===
-WP_CATEGORY = "DMM素人動画"
-WP_TAGS = []
-BASE_URL = "https://video.dmm.co.jp"
-LIST_URL = BASE_URL + "/amateur/list/?sort=date"
-MAX_POST = 3
-SELENIUM_WAIT = 12  # 動的描画待機を長めに
-
-# .envからWordPress情報とDMMアフィリエイトIDを取得
 load_dotenv()
-WP_URL     = os.getenv("WP_URL")
-WP_USER    = os.getenv("WP_USER")
-WP_PASS    = os.getenv("WP_PASS")
-AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
+WP_URL = os.getenv("WP_URL")
+WP_USER = os.getenv("WP_USER")
+WP_PASS = os.getenv("WP_PASS")
+AFF_ID = os.getenv("AFF_ID", "dmm_affiliate-xxxx")
+LIST_URL = "https://video.dmm.co.jp/amateur/list/?genre=79015"
+MAX_POSTS = 3  # 何件投稿するか
 
-def make_affiliate_link(detail_url):
-    if not AFF_ID:
-        return detail_url
-    if "affiliate_id" in detail_url:
-        return detail_url
-    delim = "&" if "?" in detail_url else "?"
-    return f"{detail_url}{delim}affiliate_id={AFF_ID}"
+def get_driver():
+    opts = Options()
+    opts.add_argument("--headless")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    return webdriver.Chrome(options=opts)
 
-def is_released(release_date_str):
-    try:
-        today = datetime.today().date()
-        rel = datetime.strptime(release_date_str, "%Y-%m-%d").date()
-        return rel <= today
-    except Exception:
-        return False
-
-def fetch_video_list_selenium():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    driver = webdriver.Chrome(options=chrome_options)
+def get_video_links():
+    driver = get_driver()
     driver.get(LIST_URL)
-    time.sleep(SELENIUM_WAIT)  # 長めに
-    html = driver.page_source
-    # --- デバッグ用HTML保存 ---
-    with open("debug_dmm.html", "w", encoding="utf-8") as f:
-        f.write(html)
+    time.sleep(3)
+    soup = BeautifulSoup(driver.page_source, "html.parser")
     driver.quit()
-    soup = BeautifulSoup(html, "html.parser")
-    items = []
-    # ↓ ここのセレクタがダメなら「debug_dmm.html」を送ってくれればすぐ直せる
+    urls = []
     for box in soup.select("li.list-box"):
-        a_tag = box.select_one("a")
-        if not a_tag:
-            continue
-        href = a_tag.get("href", "")
-        detail_url = BASE_URL + href if href.startswith("/") else href
-        title = (box.select_one(".list-box__title") or {}).get_text(strip=True)
-        date_tag = box.select_one(".list-box__release-date")
-        rel_date = ""
-        if date_tag:
-            rel_date = date_tag.get_text(strip=True).replace("配信開始日：", "").replace("発売日：", "").split()[0]
-        if not (title and detail_url and rel_date):
-            continue
-        items.append({"title": title, "detail_url": detail_url, "release_date": rel_date})
-    print(f"DEBUG: video items found: {len(items)}")
-    return items
-
-def fetch_video_detail(detail_url):
-    resp = requests.get(detail_url, timeout=15)
-    soup = BeautifulSoup(resp.text, "html.parser")
-    # サンプル画像
-    imgs = []
-    for img in soup.select("div.p-slider__item img, div#sample-video-img img"):
-        src = img.get("src")
-        if src and src.startswith("https://"):
-            imgs.append(src)
-    # 商品説明
-    desc = ""
-    desc_tag = soup.select_one("section#introduction, div.introduction__text, div.p-work-information__txt, .p-introduction__text, #work-introduction")
-    if desc_tag:
-        desc = desc_tag.get_text(strip=True)
-    return imgs, desc
+        if box.find("span", class_="icon-reserve") or box.find("span", class_="icon-pre"): continue
+        a = box.find("a", href=True)
+        if a:
+            url = a["href"]
+            if not url.startswith("http"):
+                url = "https://video.dmm.co.jp" + url
+            urls.append(url)
+        if len(urls) >= MAX_POSTS: break
+    return urls
 
 def upload_image(wp, url):
-    try:
-        data = requests.get(url, timeout=15).content
-        name = os.path.basename(url)
-        media_data = {
-            "name": name,
-            "type": "image/jpeg",
-            "bits": xmlrpc_client.Binary(data)
-        }
-        res = wp.call(media.UploadFile(media_data))
-        return res.get("id")
-    except Exception as e:
-        print(f"画像アップロード失敗: {e}")
-        return None
+    resp = requests.get(url)
+    data = {
+        'name': url.split('/')[-1],
+        'type': 'image/jpeg',
+        'bits': xmlrpc_client.Binary(resp.content)
+    }
+    return wp.call(UploadFile(data))
 
-def create_wp_post(wp, video, images, desc):
-    title = video["title"]
+def fetch_and_post(detail_url, wp):
+    driver = get_driver()
+    driver.get(detail_url)
+    time.sleep(2)
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    driver.quit()
+    # タイトル
+    title = soup.find("title").text.split(" - ")[0].strip()
+    # サンプル画像
+    sample_imgs = []
+    img_block = soup.find("div", id="sample-image-block")
+    if img_block:
+        for a in img_block.find_all("a"):
+            img = a.find("img")
+            if img and img.get("src"):
+                sample_imgs.append(img["src"] if img["src"].startswith("http") else "https:" + img["src"])
+    # 本文
+    desc_block = soup.find("div", class_="mg-b20 lh4")
+    desc = desc_block.text.strip() if desc_block else ""
+    # ラベル
+    label = ""
+    for tr in soup.find_all("tr"):
+        th = tr.find("td", class_="nw")
+        if th and "レーベル" in th.text: label = tr.find_all("td")[-1].text.strip()
+    # ジャンル
+    genres = []
+    for tr in soup.find_all("tr"):
+        th = tr.find("td", class_="nw")
+        if th and "ジャンル" in th.text:
+            genres = [g.text.strip() for g in tr.find_all("a")]
+    # 名前
+    name = ""
+    for tr in soup.find_all("tr"):
+        th = tr.find("td", class_="nw")
+        if th and "名前" in th.text: name = tr.find_all("td")[-1].text.strip()
+    # アフィリエイトリンク
+    m = re.search(r'/cid=([^/]+)/', detail_url)
+    cid = m.group(1) if m else ""
+    aff_url = f"https://al.dmm.co.jp/?lurl={detail_url}&af_id={AFF_ID}&ch=01&ch_id=link"
+    # WordPress本文
+    content = f'<p><a href="{aff_url}"><img src="{sample_imgs[0]}" alt="{title}"></a></p>' if sample_imgs else ""
+    content += f'<p>{desc}</p>'
+    content += f'<p><a href="{aff_url}">公式ページで見る</a></p>'
+    # タグ
+    tags = list(set([label] + genres + ([name] if name else [])))
+    # 投稿済み重複チェック
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
-    if any(p.title == title for p in existing):
-        print(f"→ Skipping duplicate: {title}")
-        return False
-    thumb_id = upload_image(wp, images[0])
-    aff = make_affiliate_link(video["detail_url"])
-    parts = []
-    parts.append(f'<p><a href="{aff}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
-    parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
-    if desc:
-        parts.append(f'<div>{desc}</div>')
-    for img in images[1:]:
-        parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
+    if existing: print(f"→ Skipping duplicate: {title}"); return False
+    # WP投稿
     post = WordPressPost()
     post.title = title
-    post.content = "\n".join(parts)
-    if thumb_id:
-        post.thumbnail = thumb_id
-    post.terms_names = {"category": [WP_CATEGORY], "post_tag": WP_TAGS}
-    post.post_status = "publish"
-    wp.call(posts.NewPost(post))
+    post.content = content
+    post.terms_names = {'post_tag': tags}
+    if sample_imgs:
+        image = upload_image(wp, sample_imgs[0])
+        post.thumbnail = image['id']
+    wp.call(NewPost(post))
     print(f"✔ Posted: {title}")
     return True
 
 def main():
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    videos = fetch_video_list_selenium()
-    if not videos:
-        print("No new videos to post.")
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
-        return
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    count = 0
-    for video in videos:
-        if not is_released(video["release_date"]):
-            continue
-        imgs, desc = fetch_video_detail(video["detail_url"])
-        if not imgs:
-            print(f"→ No sample images for: {video['title']}, skipping.")
-            continue
-        if create_wp_post(wp, video, imgs, desc):
-            count += 1
-        if count >= MAX_POST:
-            break
-    if count == 0:
-        print("No new videos to post.")
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
+    urls = get_video_links()
+    for u in urls:
+        try: fetch_and_post(u, wp)
+        except Exception as e: print(f"[ERROR] {u}: {e}")
 
 if __name__ == "__main__":
     main()
