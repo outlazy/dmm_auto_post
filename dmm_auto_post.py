@@ -9,21 +9,21 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from dotenv import load_dotenv
 
-# === Selenium（未導入時は案内&終了） ===
+# --- Selenium案内 ---
 try:
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
 except ImportError:
-    print("\n【ERROR】seleniumがインストールされていません。下記コマンドで先に導入してください：\n  pip install selenium\n")
+    print("\n【ERROR】seleniumがインストールされていません。\n  pip install selenium\nを実行してください。")
     sys.exit(1)
 
 try:
     _ = webdriver.Chrome
-except Exception as e:
-    print("\n【ERROR】chromedriverが見つかりません。Chromeバージョンに合うchromedriverをパスに追加してください。\n"
+except Exception:
+    print("\n【ERROR】chromedriverが見つかりません。\nChromeバージョンに合ったchromedriverをパスに追加してください。\n"
           "  Linux: sudo apt install chromium-chromedriver\n"
           "  Mac: brew install chromedriver\n"
-          "  Windows: 公式 https://chromedriver.chromium.org/downloads から取得し、パスを通してください\n")
+          "  Windows: 公式 https://chromedriver.chromium.org/downloads")
     sys.exit(1)
 
 try:
@@ -32,7 +32,7 @@ try:
     from wordpress_xmlrpc.methods.posts import GetPosts
     from wordpress_xmlrpc.compat import xmlrpc_client
 except ImportError:
-    print("\n【ERROR】python-wordpress-xmlrpcがインストールされていません。\n  pip install python-wordpress-xmlrpc\n")
+    print("\n【ERROR】python-wordpress-xmlrpcがインストールされていません。\n  pip install python-wordpress-xmlrpc\nを実行してください。")
     sys.exit(1)
 
 # === 設定 ===
@@ -63,7 +63,7 @@ def is_released(release_date_str):
         today = datetime.today().date()
         rel = datetime.strptime(release_date_str, "%Y-%m-%d").date()
         return rel <= today
-    except:
+    except Exception:
         return False
 
 def fetch_video_list_selenium():
