@@ -61,7 +61,7 @@ WP_TAGS = []
 BASE_URL = "https://video.dmm.co.jp"
 LIST_URL = BASE_URL + "/amateur/list/?sort=date"
 MAX_POST = 3
-SELENIUM_WAIT = 8  # 秒
+SELENIUM_WAIT = 12  # 動的描画待機を長めに
 
 # .envからWordPress情報とDMMアフィリエイトIDを取得
 load_dotenv()
@@ -93,11 +93,15 @@ def fetch_video_list_selenium():
     chrome_options.add_argument("--disable-dev-shm-usage")
     driver = webdriver.Chrome(options=chrome_options)
     driver.get(LIST_URL)
-    time.sleep(SELENIUM_WAIT)
+    time.sleep(SELENIUM_WAIT)  # 長めに
     html = driver.page_source
+    # --- デバッグ用HTML保存 ---
+    with open("debug_dmm.html", "w", encoding="utf-8") as f:
+        f.write(html)
     driver.quit()
     soup = BeautifulSoup(html, "html.parser")
     items = []
+    # ↓ ここのセレクタがダメなら「debug_dmm.html」を送ってくれればすぐ直せる
     for box in soup.select("li.list-box"):
         a_tag = box.select_one("a")
         if not a_tag:
