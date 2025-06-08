@@ -1,19 +1,23 @@
-import sys, subprocess, os, time, re
+import sys, subprocess, os
 
-# 必要pip自動インストール
-pkgs = [
+REQUIRED_PKGS = [
     ("selenium", "selenium"),
-    ("dotenv", "python-dotenv"),
     ("bs4", "beautifulsoup4"),
     ("requests", "requests"),
-    ("python_wordpress_xmlrpc", "python_wordpress_xmlrpc")
+    ("dotenv", "python-dotenv"),
+    ("python_wordpress_xmlrpc", "python_wordpress_xmlrpc"),
 ]
-for mod, pipname in pkgs:
+missing = []
+for mod, pipname in REQUIRED_PKGS:
     try:
         __import__(mod)
     except ImportError:
-        print(f"[INFO] installing {pipname} ...")
+        print(f"[AUTO INSTALL] pip install {pipname}")
         subprocess.check_call([sys.executable, "-m", "pip", "install", pipname])
+        missing.append(mod)
+if missing:
+    print("★ pipインストール直後はPythonのimportに反映されないことがあるため自動再実行します")
+    os.execv(sys.executable, [sys.executable] + sys.argv)  # <--- ここで完全再起動
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -23,9 +27,9 @@ from python_wordpress_xmlrpc import Client, WordPressPost
 from python_wordpress_xmlrpc.methods.posts import NewPost, GetPosts
 from python_wordpress_xmlrpc.methods.media import UploadFile
 from python_wordpress_xmlrpc.compat import xmlrpc_client
-import requests
+import requests, time, re
 
-# --- .env 読み込み ---
+# --- 環境変数 .env で管理（例：WP_URL, WP_USER, WP_PASS, AFF_ID） ---
 load_dotenv()
 WP_URL = os.getenv("WP_URL")
 WP_USER = os.getenv("WP_USER")
@@ -39,9 +43,6 @@ def get_driver():
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
-    # ChromeDriver自動DLも可、必要なら↓コメント解除
-    # from webdriver_manager.chrome import ChromeDriverManager
-    # return webdriver.Chrome(ChromeDriverManager().install(), options=opts)
     return webdriver.Chrome(options=opts)
 
 def get_video_links():
@@ -52,6 +53,7 @@ def get_video_links():
     driver.quit()
     urls = []
     for box in soup.select("li.list-box"):
+        # 予約/未配信商品は除外
         if box.find("span", class_="icon-reserve") or box.find("span", class_="icon-pre"): continue
         a = box.find("a", href=True)
         if a:
@@ -101,8 +103,6 @@ def fetch_and_post(detail_url, wp):
     for tr in soup.find_all("tr"):
         th = tr.find("td", class_="nw")
         if th and "名前" in th.text: name = tr.find_all("td")[-1].text.strip()
-    m = re.search(r'/cid=([^/]+)/', detail_url)
-    cid = m.group(1) if m else ""
     aff_url = f"https://al.dmm.co.jp/?lurl={detail_url}&af_id={AFF_ID}&ch=01&ch_id=link"
     content = f'<p><a href="{aff_url}"><img src="{sample_imgs[0]}" alt="{title}"></a></p>' if sample_imgs else ""
     content += f'<p>{desc}</p>'
