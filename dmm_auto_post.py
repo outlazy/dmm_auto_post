@@ -1,27 +1,47 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import sys
 import os
 import time
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 from dotenv import load_dotenv
-from wordpress_xmlrpc import Client, WordPressPost
-from wordpress_xmlrpc.methods import media, posts
-from wordpress_xmlrpc.methods.posts import GetPosts
-from wordpress_xmlrpc.compat import xmlrpc_client
 
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+# ========== Selenium & chromedriverチェック ==========
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+except ImportError:
+    print("【ERROR】seleniumがインストールされていません。下記コマンドを先に実行してください：\n  pip install selenium")
+    sys.exit(1)
+try:
+    _ = webdriver.Chrome
+except Exception as e:
+    print("【ERROR】chromedriverが見つかりません。Chromeのバージョンに合わせて導入・パス設定してください。")
+    print("  Linux: sudo apt install chromium-chromedriver")
+    print("  Mac: brew install chromedriver")
+    print("  Windows: 公式 https://chromedriver.chromium.org/downloads")
+    sys.exit(1)
 
-# ==== 設定 ====
+try:
+    from wordpress_xmlrpc import Client, WordPressPost
+    from wordpress_xmlrpc.methods import media, posts
+    from wordpress_xmlrpc.methods.posts import GetPosts
+    from wordpress_xmlrpc.compat import xmlrpc_client
+except ImportError:
+    print("【ERROR】python-wordpress-xmlrpcがインストールされていません。")
+    print("  pip install python-wordpress-xmlrpc")
+    sys.exit(1)
+
+# ========== 設定 ==========
 WP_CATEGORY = "DMM素人動画"
 WP_TAGS = []
 BASE_URL = "https://video.dmm.co.jp"
 LIST_URL = BASE_URL + "/amateur/list/?sort=date"
 MAX_POST = 5
-SELENIUM_WAIT = 7  # 秒
+SELENIUM_WAIT = 7
 
 # .envからWordPress情報とDMMアフィリエイトIDを取得
 load_dotenv()
@@ -51,10 +71,9 @@ def fetch_video_list_selenium():
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    # chromedriverのパスが通っていればこれでOK
     driver = webdriver.Chrome(options=chrome_options)
     driver.get(LIST_URL)
-    time.sleep(SELENIUM_WAIT)  # ページの動的生成が完了するまで待つ
+    time.sleep(SELENIUM_WAIT)
     html = driver.page_source
     driver.quit()
     soup = BeautifulSoup(html, "html.parser")
