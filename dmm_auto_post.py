@@ -1,127 +1,98 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import collections
-import collections.abc
-collections.Iterable = collections.abc.Iterable
-
 import os
 import time
 import requests
-from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+from bs4 import BeautifulSoup
+from datetime import datetime
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
-RESERVE_WORDS = ["予約", "発売前", "予約受付中"]
+# === 設定 ===
+WP_CATEGORY = "DMM素人動画"
+WP_TAGS = []
 
+BASE_URL = "https://video.dmm.co.jp"
+LIST_URL = BASE_URL + "/amateur/list/?sort=date"
+MAX_POST = 5
+
+# .envからWordPress情報取得
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
 WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
-API_ID     = os.getenv("DMM_API_ID")
-MAX_TOTAL  = 300    # 最大チェック数
-PAGE_HITS  = 100    # 1リクエスト最大
-POST_LIMIT = 5      # 投稿上限
 
-ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
-DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
+def make_affiliate_link(detail_url):
+    if "affiliate_id" in detail_url:
+        return detail_url
+    delim = "&" if "?" in detail_url else "?"
+    return f"{detail_url}{delim}affiliate_id={AFF_ID}"
 
-FLOOR_ID = "videoa"   # アダルト動画フロア（ジャンル指定なし！）
-
-def make_affiliate_link(url):
-    parsed = urlparse(url)
-    qs = dict(parse_qsl(parsed.query))
-    qs["affiliate_id"] = AFF_ID
-    new_query = urlencode(qs)
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
-
-def is_reserved(title, desc):
-    text = (title or "") + " " + (desc or "")
-    return any(w in text for w in RESERVE_WORDS)
-
-def fetch_latest_videos():
-    videos = []
-    for offset in range(1, MAX_TOTAL + 1, PAGE_HITS):
-        params = {
-            "api_id":       API_ID,
-            "affiliate_id": AFF_ID,
-            "site":         "FANZA",
-            "service":      "digital",
-            "floor_id":     FLOOR_ID,
-            # "genre_id":   ここは指定しない（広く全ジャンル）
-            "hits":         PAGE_HITS,
-            "sort":         "date",
-            "output":       "json",
-            "availability": "1",  # 発売済のみ
-            "offset":       offset
-        }
-        resp = requests.get(ITEMLIST_API, params=params, timeout=10)
-        print(f"DEBUG: API status={resp.status_code} offset={offset}")
-        print(f"DEBUG: API url={resp.url}")
-        if resp.status_code == 200:
-            items = resp.json().get("result", {}).get("items", [])
-            for item in items:
-                title = item.get("title") or ""
-                desc = item.get("description") or ""
-                if is_reserved(title, desc):
-                    print(f"→ Skipping reserved: {title}")
-                    continue
-                cid = item.get("content_id") or item.get("cid")
-                detail_url = item.get("URL")
-                videos.append({
-                    "title": title,
-                    "cid": cid,
-                    "detail_url": detail_url,
-                    "description": desc,
-                })
-            if not items:
-                break  # これ以上ページなし
-        else:
-            print(f"DEBUG: API failed. Body={resp.text[:200]}")
-            break
-        if len(videos) >= MAX_TOTAL:
-            break
-    print(f"DEBUG: API got {len(videos)} 動画 items")
-    return videos[:MAX_TOTAL]
-
-def fetch_sample_images(cid):
-    params = {
-        "api_id": API_ID,
-        "affiliate_id": AFF_ID,
-        "site": "FANZA",
-        "service": "digital",
-        "floor_id": FLOOR_ID,
-        "cid": cid,
-        "output": "json",
-    }
-    resp = requests.get(DETAIL_API, params=params, timeout=10)
+def is_released(release_date_str):
     try:
-        resp.raise_for_status()
-        items = resp.json().get("result", {}).get("items", [])
-    except Exception as e:
-        print(f"DEBUG: ItemDetail API failed for {cid}: {e}")
-        return []
-    if not items:
-        return []
-    samples = items[0].get("sampleImageURL", {}).get("large")
-    if isinstance(samples, list):
-        return samples
-    if isinstance(samples, str):
-        return [samples]
-    return []
+        today = datetime.today().date()
+        rel = datetime.strptime(release_date_str, "%Y-%m-%d").date()
+        return rel <= today
+    except:
+        return False
+
+def fetch_video_list():
+    resp = requests.get(LIST_URL, timeout=15)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    items = []
+    for box in soup.select("li.list-box"):
+        a_tag = box.select_one("a")
+        if not a_tag:
+            continue
+        href = a_tag["href"]
+        detail_url = BASE_URL + href if href.startswith("/") else href
+        title = (box.select_one(".list-box__title") or {}).get_text(strip=True)
+        date_tag = box.select_one(".list-box__release-date")
+        rel_date = ""
+        if date_tag:
+            rel_date = date_tag.get_text(strip=True).replace("配信開始日：", "").replace("発売日：", "").split()[0]
+        if not (title and detail_url and rel_date):
+            continue
+        items.append({"title": title, "detail_url": detail_url, "release_date": rel_date})
+    return items
+
+def fetch_video_detail(detail_url):
+    resp = requests.get(detail_url, timeout=15)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    # サンプル画像取得
+    imgs = []
+    for img in soup.select("div.p-slider__item img, div#sample-video-img img"):
+        src = img.get("src")
+        if src and src.startswith("https://"):
+            imgs.append(src)
+    # 商品説明取得
+    desc = ""
+    desc_tag = soup.select_one("section#introduction, div.introduction__text, div.p-work-information__txt, .p-introduction__text, #work-introduction")
+    if desc_tag:
+        desc = desc_tag.get_text(strip=True)
+    return imgs, desc
 
 def upload_image(wp, url):
-    data = requests.get(url, timeout=10).content
-    name = os.path.basename(urlparse(url).path)
-    media_data = {"name": name, "type": "image/jpeg", "bits": xmlrpc_client.Binary(data)}
-    res = wp.call(media.UploadFile(media_data))
-    return res.get("id")
+    try:
+        data = requests.get(url, timeout=15).content
+        name = os.path.basename(url)
+        media_data = {
+            "name": name,
+            "type": "image/jpeg",
+            "bits": xmlrpc_client.Binary(data)
+        }
+        res = wp.call(media.UploadFile(media_data))
+        return res.get("id")
+    except Exception as e:
+        print(f"画像アップロード失敗: {e}")
+        return None
 
-def create_wp_post(wp, video, images):
+def create_wp_post(wp, video, images, desc):
     title = video["title"]
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if any(p.title == title for p in existing):
@@ -132,16 +103,17 @@ def create_wp_post(wp, video, images):
     parts = []
     parts.append(f'<p><a href="{aff}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
-    if video.get("description"):
-        parts.append(f'<div>{video["description"]}</div>')
+    if desc:
+        parts.append(f'<div>{desc}</div>')
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
     parts.append(f'<p><a href="{aff}" target="_blank">{title}</a></p>')
     post = WordPressPost()
     post.title = title
     post.content = "\n".join(parts)
-    post.thumbnail = thumb_id
-    post.terms_names = {"category": ["DMM動画"], "post_tag": []}
+    if thumb_id:
+        post.thumbnail = thumb_id
+    post.terms_names = {"category": [WP_CATEGORY], "post_tag": WP_TAGS}
     post.post_status = "publish"
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {title}")
@@ -149,19 +121,21 @@ def create_wp_post(wp, video, images):
 
 def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    videos = fetch_latest_videos()
+    videos = fetch_video_list()
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    post_count = 0
+    count = 0
     for video in videos:
-        images = fetch_sample_images(video["cid"])
-        if not images:
-            print(f"→ No samples for: {video['title']}, skipping.")
+        if not is_released(video["release_date"]):
             continue
-        if create_wp_post(wp, video, images):
-            post_count += 1
-        if post_count >= POST_LIMIT:
+        imgs, desc = fetch_video_detail(video["detail_url"])
+        if not imgs:
+            print(f"→ No sample images for: {video['title']}, skipping.")
+            continue
+        if create_wp_post(wp, video, imgs, desc):
+            count += 1
+        if count >= MAX_POST:
             break
-    if post_count == 0:
+    if count == 0:
         print("No new videos to post.")
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
 
