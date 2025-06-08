@@ -15,7 +15,6 @@ from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
-# 除外ワード（タイトルや説明にこれらが含まれるとスキップ）
 RESERVE_WORDS = ["予約", "発売前", "予約受付中"]
 
 load_dotenv()
@@ -24,8 +23,9 @@ WP_USER    = os.getenv("WP_USER")
 WP_PASS    = os.getenv("WP_PASS")
 AFF_ID     = os.getenv("DMM_AFFILIATE_ID")
 API_ID     = os.getenv("DMM_API_ID")
-MAX_CHECK  = 300    # 直近300件チェック
-POST_LIMIT = 5      # 最大5件投稿
+MAX_TOTAL  = 300    # 最大チェック数
+PAGE_HITS  = 100    # 1リクエスト最大
+POST_LIMIT = 5      # 投稿上限
 
 ITEMLIST_API = "https://api.dmm.com/affiliate/v3/ItemList"
 DETAIL_API   = "https://api.dmm.com/affiliate/v3/ItemDetail"
@@ -45,42 +45,49 @@ def is_reserved(title, desc):
     return any(w in text for w in RESERVE_WORDS)
 
 def fetch_latest_videos():
-    params = {
-        "api_id":       API_ID,
-        "affiliate_id": AFF_ID,
-        "site":         "FANZA",
-        "service":      "digital",
-        "floor_id":     FLOOR_ID,
-        "genre_id":     GENRE_ID,
-        "hits":         MAX_CHECK,
-        "sort":         "date",
-        "output":       "json",
-        "availability": "1",  # 発売済のみ
-    }
-    resp = requests.get(ITEMLIST_API, params=params, timeout=10)
-    print(f"DEBUG: API status={resp.status_code}")
-    print(f"DEBUG: API url={resp.url}")
     videos = []
-    if resp.status_code == 200:
-        items = resp.json().get("result", {}).get("items", [])
-        for item in items:
-            title = item.get("title") or ""
-            desc = item.get("description") or ""
-            if is_reserved(title, desc):
-                print(f"→ Skipping reserved: {title}")
-                continue
-            cid = item.get("content_id") or item.get("cid")
-            detail_url = item.get("URL")
-            videos.append({
-                "title": title,
-                "cid": cid,
-                "detail_url": detail_url,
-                "description": desc,
-            })
-        print(f"DEBUG: API got {len(videos)} 素人（予約除外） items")
-    else:
-        print(f"DEBUG: API failed. Body={resp.text[:200]}")
-    return videos
+    for offset in range(1, MAX_TOTAL + 1, PAGE_HITS):
+        params = {
+            "api_id":       API_ID,
+            "affiliate_id": AFF_ID,
+            "site":         "FANZA",
+            "service":      "digital",
+            "floor_id":     FLOOR_ID,
+            "genre_id":     GENRE_ID,
+            "hits":         PAGE_HITS,
+            "sort":         "date",
+            "output":       "json",
+            "availability": "1",  # 発売済のみ
+            "offset":       offset
+        }
+        resp = requests.get(ITEMLIST_API, params=params, timeout=10)
+        print(f"DEBUG: API status={resp.status_code} offset={offset}")
+        print(f"DEBUG: API url={resp.url}")
+        if resp.status_code == 200:
+            items = resp.json().get("result", {}).get("items", [])
+            for item in items:
+                title = item.get("title") or ""
+                desc = item.get("description") or ""
+                if is_reserved(title, desc):
+                    print(f"→ Skipping reserved: {title}")
+                    continue
+                cid = item.get("content_id") or item.get("cid")
+                detail_url = item.get("URL")
+                videos.append({
+                    "title": title,
+                    "cid": cid,
+                    "detail_url": detail_url,
+                    "description": desc,
+                })
+            if not items:
+                break  # これ以上ページなし
+        else:
+            print(f"DEBUG: API failed. Body={resp.text[:200]}")
+            break
+        if len(videos) >= MAX_TOTAL:
+            break
+    print(f"DEBUG: API got {len(videos)} 素人（予約除外） items")
+    return videos[:MAX_TOTAL]
 
 def fetch_sample_images(cid):
     params = {
