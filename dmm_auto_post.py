@@ -14,9 +14,8 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
 
-# === 設定 ===
+# ==== 設定 ====
 WP_CATEGORY = "DMM素人動画"
 WP_TAGS = []
 BASE_URL = "https://video.dmm.co.jp"
@@ -24,7 +23,7 @@ LIST_URL = BASE_URL + "/amateur/list/?sort=date"
 MAX_POST = 5
 SELENIUM_WAIT = 7  # 秒
 
-# .envからWordPress情報取得
+# .envからWordPress情報とDMMアフィリエイトIDを取得
 load_dotenv()
 WP_URL     = os.getenv("WP_URL")
 WP_USER    = os.getenv("WP_USER")
@@ -52,14 +51,12 @@ def fetch_video_list_selenium():
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    # chromedriverのパスが通っていればこれでOK
     driver = webdriver.Chrome(options=chrome_options)
-
     driver.get(LIST_URL)
-    time.sleep(SELENIUM_WAIT)  # 動的生成完了まで十分待つ
-
+    time.sleep(SELENIUM_WAIT)  # ページの動的生成が完了するまで待つ
     html = driver.page_source
     driver.quit()
-
     soup = BeautifulSoup(html, "html.parser")
     items = []
     for box in soup.select("li.list-box"):
@@ -82,13 +79,13 @@ def fetch_video_list_selenium():
 def fetch_video_detail(detail_url):
     resp = requests.get(detail_url, timeout=15)
     soup = BeautifulSoup(resp.text, "html.parser")
-    # サンプル画像取得
+    # サンプル画像
     imgs = []
     for img in soup.select("div.p-slider__item img, div#sample-video-img img"):
         src = img.get("src")
         if src and src.startswith("https://"):
             imgs.append(src)
-    # 商品説明取得
+    # 商品説明
     desc = ""
     desc_tag = soup.select_one("section#introduction, div.introduction__text, div.p-work-information__txt, .p-introduction__text, #work-introduction")
     if desc_tag:
