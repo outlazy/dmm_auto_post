@@ -1,13 +1,6 @@
 import sys
 import subprocess
 
-# 必要なパッケージ（install名, import名, 別import名）
-pkgs = [
-    ("requests", "requests", None),
-    ("bs4", "bs4", None),
-    ("python-wordpress-xmlrpc", "python_wordpress_xmlrpc", "wordpress_xmlrpc"),
-]
-
 def ensure_import(install_name, import_name, alt_import=None):
     try:
         return __import__(import_name)
@@ -26,7 +19,6 @@ def ensure_import(install_name, import_name, alt_import=None):
                 return __import__(alt_import)
             raise
 
-# 各種import
 requests = ensure_import("requests", "requests")
 bs4 = ensure_import("bs4", "bs4")
 wp_mod = ensure_import("python-wordpress-xmlrpc", "python_wordpress_xmlrpc", "wordpress_xmlrpc")
@@ -57,11 +49,13 @@ def get_latest_items():
     res = requests.get(DMM_LIST_URL, headers=headers)
     soup = BeautifulSoup(res.content, "html.parser")
     items = []
-    for a in soup.select("a[href*='/digital/videoc/-/detail/']"):
-        href = a.get("href")
-        if "/detail/" in href and not href.endswith("/review/"):
+    # 詳細ページへのhref形式は `/digital/videoc/-/detail/=/cid=xxxx/`
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/digital/videoc/-/detail/=/cid=" in href:
+            # DMMの素人詳細ページのみ拾う（重複排除）
             if not href.startswith("http"):
-                href = DMM_DETAIL_BASE + href
+                href = "https://www.dmm.co.jp" + href
             if href not in items:
                 items.append(href)
     print(f"検出: {len(items)}件")
@@ -78,7 +72,7 @@ def scrape_detail(url):
     desc = desc.text.strip() if desc else ""
     date = ""
     for tr in soup.select("tr"):
-        if tr.text.strip().startswith("配信開始日"):
+        if "配信開始日" in tr.text:
             tds = tr.select("td")
             if len(tds) > 1:
                 date = tds[1].text.strip()
