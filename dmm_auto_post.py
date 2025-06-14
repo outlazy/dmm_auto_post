@@ -1,11 +1,11 @@
 import subprocess
 import sys
 
-# 必要パッケージの自動インストール＆import
+# 必要パッケージ自動インストール＆import（import名に注意）
 REQUIRED = [
     ("requests", "requests"),
     ("beautifulsoup4", "bs4"),
-    ("python-wordpress-xmlrpc", "python_wordpress_xmlrpc"),
+    ("python-wordpress-xmlrpc", "wordpress_xmlrpc"),
 ]
 def install_and_import(install_name, import_name):
     try:
@@ -21,8 +21,8 @@ for install_name, import_name in REQUIRED:
 import time
 from bs4 import BeautifulSoup
 import requests
-from python_wordpress_xmlrpc import Client, WordPressPost
-from python_wordpress_xmlrpc.methods.posts import NewPost
+from wordpress_xmlrpc import Client, WordPressPost
+from wordpress_xmlrpc.methods.posts import NewPost
 
 # ------- 設定 -------
 WP_XMLRPC_URL = "https://example.com/xmlrpc.php"    # ←WordPress XML-RPC エンドポイント
@@ -32,7 +32,6 @@ WP_PASS = "your_password"                          # ←WordPressパスワード
 DMM_LIST_URL = "https://video.dmm.co.jp/amateur/list/?sort=date"
 DMM_DETAIL_BASE = "https://www.dmm.co.jp"
 
-# 投稿済み判定用（メモリで直近10件だけ管理。必要ならDBやファイル管理に拡張して）
 POSTED = []
 
 def get_latest_items():
@@ -58,16 +57,14 @@ def get_item_detail(detail_url):
         main_image = img_block.get("src")
         if main_image and main_image.startswith("//"):
             main_image = "https:" + main_image
-    # サンプル画像（複数）
     sample_imgs = []
     for img in soup.select("#sample-image-block img"):
         src = img.get("src")
         if src and src.startswith("//"):
             src = "https:" + src
         sample_imgs.append(src)
-    # 紹介文
-    intro = soup.select_one(".mg-b20.lh4, .introduction, .mg-b20").get_text(separator="\n", strip=True) if soup.select_one(".mg-b20.lh4, .introduction, .mg-b20") else ""
-    # 配信開始日
+    intro = soup.select_one(".mg-b20.lh4, .introduction, .mg-b20")
+    intro = intro.get_text(separator="\n", strip=True) if intro else ""
     release = ""
     for tr in soup.select("tr"):
         if "配信開始日" in tr.get_text():
@@ -88,24 +85,18 @@ def post_to_wordpress(item):
     post = WordPressPost()
     post.title = item["title"]
     parts = []
-    # アイキャッチ＋サンプル
     if item["main_image"]:
         parts.append(f'<img src="{item["main_image"]}" alt="{item["title"]}" style="max-width:100%;" /><br>')
-    # 本文
     if item["intro"]:
         parts.append(f"<p>{item['intro']}</p>")
-    # サンプル画像
     if item["sample_imgs"]:
         for src in item["sample_imgs"]:
             parts.append(f'<img src="{src}" alt="{item["title"]}サンプル" style="max-width:100%;" /><br>')
-    # 詳細ページリンク
     parts.append(f'<p><a href="{item["url"]}" target="_blank">DMMで詳細を見る</a></p>')
-    # 配信開始日
     if item["release"]:
         parts.append(f"<div>配信開始日: {item['release']}</div>")
     post.content = "\n".join(parts)
     post.post_status = "publish"
-    # 投稿
     wp.call(NewPost(post))
     print("投稿完了:", item["title"])
 
@@ -115,13 +106,12 @@ def main():
         if url in POSTED:
             continue
         item = get_item_detail(url)
-        # 既にリリース済のみ投稿
         if item["release"] and item["main_image"]:
             post_to_wordpress(item)
             POSTED.append(url)
-            if len(POSTED) > 10:  # 直近10件だけ管理
+            if len(POSTED) > 10:
                 POSTED.pop(0)
-            time.sleep(2)  # 連投防止
+            time.sleep(2)
 
 if __name__ == "__main__":
     main()
