@@ -1,31 +1,49 @@
 import sys
 import subprocess
 
-# 必要なモジュールリスト
+# 必要なパッケージ（install名, import名, 別import名）
 pkgs = [
-    ("requests", "requests"),
-    ("bs4", "bs4"),
-    ("python_wordpress_xmlrpc", "python-wordpress-xmlrpc"),
+    ("requests", "requests", None),
+    ("bs4", "bs4", None),
+    ("python-wordpress-xmlrpc", "python_wordpress_xmlrpc", "wordpress_xmlrpc"),
 ]
 
-# pip未導入時は自動インストール
-for import_name, install_name in pkgs:
+def ensure_import(install_name, import_name, alt_import=None):
     try:
-        __import__(import_name)
+        return __import__(import_name)
     except ImportError:
+        if alt_import:
+            try:
+                return __import__(alt_import)
+            except ImportError:
+                pass
         print(f"[AUTO INSTALL] pip install {install_name}")
         subprocess.check_call([sys.executable, "-m", "pip", "install", install_name])
+        try:
+            return __import__(import_name)
+        except ImportError:
+            if alt_import:
+                return __import__(alt_import)
+            raise
 
-import requests
+# 各種import
+requests = ensure_import("requests", "requests")
+bs4 = ensure_import("bs4", "bs4")
+wp_mod = ensure_import("python-wordpress-xmlrpc", "python_wordpress_xmlrpc", "wordpress_xmlrpc")
+
 from bs4 import BeautifulSoup
-from python_wordpress_xmlrpc import Client, WordPressPost
-from python_wordpress_xmlrpc.methods.posts import NewPost
+try:
+    from python_wordpress_xmlrpc import Client, WordPressPost
+    from python_wordpress_xmlrpc.methods.posts import NewPost
+except ImportError:
+    from wordpress_xmlrpc import Client, WordPressPost
+    from wordpress_xmlrpc.methods.posts import NewPost
 import time
 
 # ---------- 設定 ----------
-WORDPRESS_URL = "https://あなたのドメイン/xmlrpc.php"
-WORDPRESS_ID = "あなたのID"
-WORDPRESS_PW = "あなたのパスワード"
+WP_URL = "https://あなたのドメイン/xmlrpc.php"
+WP_USER = "あなたのID"
+WP_PASS = "あなたのパスワード"
 
 DMM_LIST_URL = "https://video.dmm.co.jp/amateur/list/?sort=date"
 DMM_DETAIL_BASE = "https://www.dmm.co.jp"
@@ -94,7 +112,7 @@ def scrape_detail(url):
 
 def post_to_wordpress(info):
     print(f"WordPress投稿: {info['title']}")
-    wp = Client(WORDPRESS_URL, WORDPRESS_ID, WORDPRESS_PW)
+    wp = Client(WP_URL, WP_USER, WP_PASS)
     post = WordPressPost()
     post.title = info["title"]
     html = ""
