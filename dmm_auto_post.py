@@ -2,29 +2,24 @@ import sys
 import subprocess
 import time
 
-def ensure_import(install_name, import_name, alt_import=None):
+def ensure_import(install_name, import_name):
     try:
         return __import__(import_name)
     except ImportError:
         print(f"[AUTO INSTALL] pip install {install_name}")
         subprocess.check_call([sys.executable, "-m", "pip", "install", install_name])
-        try:
-            return __import__(import_name)
-        except ImportError:
-            if alt_import:
-                return __import__(alt_import)
-            raise
+        return __import__(import_name)
 
 requests = ensure_import("requests", "requests")
 bs4 = ensure_import("beautifulsoup4", "bs4")
 selenium = ensure_import("selenium", "selenium")
-wp_mod = ensure_import("python-wordpress-xmlrpc", "python_wordpress_xmlrpc", "wordpress_xmlrpc")
+wp_mod = ensure_import("python-wordpress-xmlrpc", "python_wordpress_xmlrpc")
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
-# --- WordPress設定（自分の環境に合わせてください） ---
+# WordPress設定
 WP_URL = "https://your-site.com/xmlrpc.php"
 WP_USER = "your_id"
 WP_PASS = "your_password"
@@ -42,19 +37,18 @@ def get_latest_items():
     chrome_options.add_argument('--user-agent=Mozilla/5.0')
     driver = webdriver.Chrome(options=chrome_options)
     driver.get(DMM_LIST_URL)
-    time.sleep(4)
+    time.sleep(5)  # JSレンダリング待機
     html = driver.page_source
     driver.quit()
     soup = BeautifulSoup(html, "html.parser")
     items = []
-    for div in soup.select("div.d-item"):
-        a = div.select_one("a[href*='/digital/videoc/-/detail/']")
-        if a:
-            href = a["href"]
-            if not href.startswith("http"):
-                href = "https://www.dmm.co.jp" + href
-            if href not in items:
-                items.append(href)
+    # 最新SPA構造対応
+    for a in soup.select("div.amateur-list__item a[href*='/digital/videoc/-/detail/']"):
+        href = a["href"]
+        if not href.startswith("http"):
+            href = "https://www.dmm.co.jp" + href
+        if href not in items:
+            items.append(href)
     print(f"検出: {len(items)}件")
     return items[:MAX_POST]
 
