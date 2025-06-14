@@ -21,7 +21,7 @@ def fetch_latest_video(genre_id: str) -> dict | None:
     params = {
         "api_id": api_id,
         "affiliate_id": affiliate_id,
-        "site": "FANZA",
+        "site": os.getenv("DMM_SITE", "FANZA"),
         "service": "digital",
         "floor": "videoa",
         "mono_genre_id": genre_id,
@@ -36,9 +36,24 @@ def fetch_latest_video(genre_id: str) -> dict | None:
     if not items:
         return None
     item = items[0]
+    # detail URL extraction
+    url_val = item.get("URL")
+    if isinstance(url_val, dict):
+        detail_url = url_val.get("item") or url_val.get("affiliate") or ""
+    else:
+        detail_url = url_val or ""
+    # thumbnail extraction
+    img_val = item.get("imageURL")
+    if isinstance(img_val, dict):
+        thumb = img_val.get("large") or img_val.get("small") or ""
+    else:
+        thumb = img_val or ""
     return {
         "title": item.get("title", ""),
-        "detail_url": item.get("URL", {}).get("item", ""),
+        "detail_url": detail_url,
+        "thumb": thumb,
+        "description": item.get("description", "")
+    }).get("item", ""),
         "thumb": item.get("imageURL", {}).get("large", ""),
         "description": item.get("description", "")
     }
