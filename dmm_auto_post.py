@@ -1,26 +1,18 @@
 import sys
-import subprocess
+import os
 
-# site-packagesの絶対パスを強制追加
-sys.path.append('/opt/hostedtoolcache/Python/3.13.3/x64/lib/python3.13/site-packages')
+print("Pythonバージョン:", sys.version)
+print("sys.path:", sys.path)
+print("環境変数PATH:", os.environ.get("PATH"))
+print("site-packages一覧:")
+import glob
+for path in sys.path:
+    if "site-packages" in path:
+        for f in glob.glob(f"{path}/python*xmlrpc*"):
+            print("  ", f)
 
-def ensure(pkg, import_name=None):
-    import_name = import_name or pkg.replace('-', '_')
-    try:
-        __import__(import_name)
-    except ImportError:
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg])
-        __import__(import_name)
-
-ensure('requests')
-ensure('lxml')
-ensure('python-wordpress-xmlrpc', 'python_wordpress_xmlrpc')
-
-import requests
-from lxml import html
-from python_wordpress_xmlrpc import Client, WordPressPost
-from python_wordpress_xmlrpc.methods.posts import NewPost
-
-# ---（以下いつもの自動投稿処理）---
-
-print("全てimport成功！")
+try:
+    import python_wordpress_xmlrpc
+    print("[OK] import python_wordpress_xmlrpc")
+except Exception as e:
+    print("[NG] import python_wordpress_xmlrpc:", e)
