@@ -18,6 +18,7 @@ def fetch_latest_video(genre_id: str) -> dict | None:
     if not api_id or not affiliate_id:
         print("Error: DMM_API_ID / DMM_AFFILIATE_ID not set in environment.")
         sys.exit(1)
+    # Prepare API parameters
     params = {
         "api_id": api_id,
         "affiliate_id": affiliate_id,
@@ -29,6 +30,7 @@ def fetch_latest_video(genre_id: str) -> dict | None:
         "sort": "date",
         "output": "json"
     }
+    # Call DMM API
     response = requests.get("https://api.dmm.com/affiliate/v3/ItemList", params=params)
     response.raise_for_status()
     data = response.json()
@@ -36,13 +38,13 @@ def fetch_latest_video(genre_id: str) -> dict | None:
     if not items:
         return None
     item = items[0]
-    # detail URL extraction
+    # Extract detail URL
     url_val = item.get("URL")
     if isinstance(url_val, dict):
         detail_url = url_val.get("item") or url_val.get("affiliate") or ""
     else:
         detail_url = url_val or ""
-    # thumbnail extraction
+    # Extract thumbnail
     img_val = item.get("imageURL")
     if isinstance(img_val, dict):
         thumb = img_val.get("large") or img_val.get("small") or ""
@@ -52,30 +54,6 @@ def fetch_latest_video(genre_id: str) -> dict | None:
         "title": item.get("title", ""),
         "detail_url": detail_url,
         "thumb": thumb,
-        "description": item.get("description", "")
-    }.get("items", [])
-    if not items:
-        return None
-    item = items[0]
-    # detail URL extraction
-    url_val = item.get("URL")
-    if isinstance(url_val, dict):
-        detail_url = url_val.get("item") or url_val.get("affiliate") or ""
-    else:
-        detail_url = url_val or ""
-    # thumbnail extraction
-    img_val = item.get("imageURL")
-    if isinstance(img_val, dict):
-        thumb = img_val.get("large") or img_val.get("small") or ""
-    else:
-        thumb = img_val or ""
-    return {
-        "title": item.get("title", ""),
-        "detail_url": detail_url,
-        "thumb": thumb,
-        "description": item.get("description", "")
-    }).get("item", ""),
-        "thumb": item.get("imageURL", {}).get("large", ""),
         "description": item.get("description", "")
     }
 
@@ -86,12 +64,16 @@ def post_to_wp(item: dict):
     wp_url = os.getenv("WP_URL")
     wp_user = os.getenv("WP_USER")
     wp_pass = os.getenv("WP_PASS")
+    if not (wp_url and wp_user and wp_pass):
+        print("Error: WP_URL / WP_USER / WP_PASS not set in environment.")
+        sys.exit(1)
     wp = Client(wp_url, wp_user, wp_pass)
+    # Check duplicates
     existing = wp.call(posts.GetPosts({"post_status": "publish", "s": item["title"]}))
     if any(p.title == item["title"] for p in existing):
         print(f"→ Skipping duplicate: {item['title']}")
         return
-
+    # Upload thumbnail
     thumb_id = None
     if item.get("thumb"):
         try:
@@ -105,16 +87,14 @@ def post_to_wp(item: dict):
             thumb_id = resp_media.get("id")
         except Exception as e:
             print(f"Warning: thumbnail upload failed: {e}")
-
+    # Generate content
     description = item.get("description", "") or "(説明文なし)"
     summary = textwrap.shorten(description, width=200, placeholder="…")
-
-    # コンテンツ生成
     content = f"<p>{summary}</p>\n"
     if thumb_id:
         content += f"<p><img src=\"{item['thumb']}\" alt=\"{item['title']}\"></p>\n"
     content += f"<p><a href=\"{item['detail_url']}\" target=\"_blank\">▶ 詳細・購入はこちら</a></p>\n"
-
+    # Publish
     post = WordPressPost()
     post.title = item["title"]
     post.content = content
@@ -124,7 +104,6 @@ def post_to_wp(item: dict):
     post.post_status = "publish"
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {item['title']}")
-
 
 def main():
     load_dotenv()
