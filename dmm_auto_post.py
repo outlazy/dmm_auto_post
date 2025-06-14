@@ -1,10 +1,26 @@
 import sys
-import time
+import subprocess
+
+# 必要なモジュールリスト
+pkgs = [
+    ("requests", "requests"),
+    ("bs4", "bs4"),
+    ("python_wordpress_xmlrpc", "python-wordpress-xmlrpc"),
+]
+
+# pip未導入時は自動インストール
+for import_name, install_name in pkgs:
+    try:
+        __import__(import_name)
+    except ImportError:
+        print(f"[AUTO INSTALL] pip install {install_name}")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", install_name])
+
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
 from python_wordpress_xmlrpc import Client, WordPressPost
 from python_wordpress_xmlrpc.methods.posts import NewPost
+import time
 
 # ---------- 設定 ----------
 WORDPRESS_URL = "https://あなたのドメイン/xmlrpc.php"
@@ -15,9 +31,8 @@ DMM_LIST_URL = "https://video.dmm.co.jp/amateur/list/?sort=date"
 DMM_DETAIL_BASE = "https://www.dmm.co.jp"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-MAX_POST = 3  # 1回で投稿する数（最新から）
+MAX_POST = 3
 
-# ---------- 一覧ページから商品URL収集 ----------
 def get_latest_items():
     print("一覧ページ取得中...")
     headers = {"User-Agent": USER_AGENT}
@@ -34,19 +49,15 @@ def get_latest_items():
     print(f"検出: {len(items)}件")
     return items[:MAX_POST]
 
-# ---------- 詳細ページから情報取得 ----------
 def scrape_detail(url):
     print("詳細取得: " + url)
     headers = {"User-Agent": USER_AGENT}
     res = requests.get(url, headers=headers)
     soup = BeautifulSoup(res.content, "html.parser")
-    # タイトル
     title = soup.select_one("h1#title, h1[itemprop='name']")
     title = title.text.strip() if title else "タイトル不明"
-    # 説明文
     desc = soup.select_one(".mg-b20.lh4, .product-text__info")
     desc = desc.text.strip() if desc else ""
-    # 配信日
     date = ""
     for tr in soup.select("tr"):
         if tr.text.strip().startswith("配信開始日"):
@@ -56,17 +67,14 @@ def scrape_detail(url):
             else:
                 date = tds[0].text.strip()
             break
-    # ジャンル
     genre = [a.text for a in soup.select("a[href*='keyword=']")]
     genre = ", ".join(genre)
-    # サンプル画像
     images = []
     for img in soup.select("#sample-image-block img"):
         img_url = img.get("src")
         if img_url.startswith("//"):
             img_url = "https:" + img_url
         images.append(img_url)
-    # メイン画像（サムネ）
     thumb = ""
     if images:
         thumb = images[0]
@@ -84,7 +92,6 @@ def scrape_detail(url):
         "url": url,
     }
 
-# ---------- WordPressへ投稿 ----------
 def post_to_wordpress(info):
     print(f"WordPress投稿: {info['title']}")
     wp = Client(WORDPRESS_URL, WORDPRESS_ID, WORDPRESS_PW)
@@ -112,7 +119,6 @@ def post_to_wordpress(info):
     wp.call(NewPost(post))
     print("投稿完了！")
 
-# ---------- メイン処理 ----------
 def main():
     items = get_latest_items()
     if not items:
@@ -121,7 +127,7 @@ def main():
     for url in items:
         info = scrape_detail(url)
         post_to_wordpress(info)
-        time.sleep(3)  # 投稿間にインターバル（負荷対策）
+        time.sleep(3)
 
 if __name__ == "__main__":
     main()
