@@ -3,17 +3,6 @@
 
 import sys
 import subprocess
-import os
-import time
-import requests
-from dotenv import load_dotenv
-from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
-from wordpress_xmlrpc import Client, WordPressPost
-from wordpress_xmlrpc.methods import media, posts
-from wordpress_xmlrpc.methods.posts import GetPosts
-from wordpress_xmlrpc.compat import xmlrpc_client
-import collections.abc
-from bs4 import BeautifulSoup
 
 # --- Bootstrap dependencies: install missing packages at runtime ---
 required_packages = [
@@ -27,6 +16,19 @@ for module, pkg in required_packages:
         __import__(module)
     except ImportError:
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg])
+
+# --- Now safe to import third-party packages ---
+import os
+import time
+import requests
+from dotenv import load_dotenv
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+from wordpress_xmlrpc import Client, WordPressPost
+from wordpress_xmlrpc.methods import media, posts
+from wordpress_xmlrpc.methods.posts import GetPosts
+from wordpress_xmlrpc.compat import xmlrpc_client
+import collections.abc
+from bs4 import BeautifulSoup
 
 # Compatibility patch for wordpress_xmlrpc
 collections.Iterable = collections.abc.Iterable
@@ -95,7 +97,7 @@ def get_genre_id(keyword: str) -> str:
 
 # Fetch latest videos via ItemList API
 def fetch_latest_videos() -> list:
-    genre_id = get_genre_id(genres_keyword if 'genres_keyword' in globals() else genre_keyword)
+    genre_id = get_genre_id(genre_keyword)
     if not genre_id:
         print("DEBUG: No genre ID found")
         return []
@@ -172,7 +174,10 @@ def create_wp_post(video: dict) -> bool:
         return False
     thumb = upload_image(wp, imgs[0])
     aff = make_affiliate_link(video['detail_url'])
-    parts = [f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}' alt='{title}'/></a></p>", f"<p><a href='{aff}' target='_blank'>{title}</a></p>"]
+    parts = [
+        f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}' alt='{title}'/></a></p>",
+        f"<p><a href='{aff}' target='_blank'>{title}</a></p>"
+    ]
     parts += [f"<p><img src='{i}' alt='{title}'/></p>" for i in imgs[1:]]
     parts.append(f"<p><a href='{aff}' target='_blank'>{title}</a></p>")
     post = WordPressPost()
