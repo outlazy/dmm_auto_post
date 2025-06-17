@@ -2,10 +2,9 @@ name: DMM 素人ジャンル自動投稿
 
 on:
   schedule:
-    # GitHub Actions の cron は UTC なので、JST（Asia/Tokyo）0時／4時／8時／12時／16時／20時に実行したい場合は、
-    # UTC でそれぞれ 21時／0時／4時／8時／12時／16時 を指定します。
-    - cron: '0 21,0,4,8,12,16 * * *'  # 毎日6回（4時間おき）  
-  workflow_dispatch:  # 任意実行用
+    # UTCで21,1,5,9,13,17時に毎日実行（JSTの0/4/8/12/16/20時）
+    - cron: '0 21,1,5,9,13,17 * * *'
+  workflow_dispatch:  # 手動トリガーも可能
 
 jobs:
   post:
@@ -20,16 +19,16 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 依存ライブラリをインストール
-        run: |
-          pip install -r requirements.txt
+      # 依存ライブラリはスクリプト内でセルフインストールするため、不要
+      # - name: 依存ライブラリをインストール
+      #   run: pip install -r requirements.txt
 
       - name: 自動投稿スクリプト実行
         env:
-          WP_URL:         ${{ secrets.WP_URL }}
-          WP_USER:        ${{ secrets.WP_USER }}
-          WP_PASS:        ${{ secrets.WP_PASS }}
+          WP_URL:           ${{ secrets.WP_URL }}
+          WP_USER:          ${{ secrets.WP_USER }}
+          WP_PASS:          ${{ secrets.WP_PASS }}
           DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
-          DMM_API_ID:     ${{ secrets.DMM_API_ID }}
+          DMM_API_ID:       ${{ secrets.DMM_API_ID }}
         run: |
           python dmm_auto_post.py
