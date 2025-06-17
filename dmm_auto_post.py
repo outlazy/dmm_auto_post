@@ -93,7 +93,7 @@ def fetch_latest_videos() -> list:
             return []
 
     vids = []
-    for li in soup.select('ul.list-box li')[:max_posts]:
+    for li in soup.select('li.list-box')[:max_posts]:
         a = li.find('a', class_='tmb')
         if not a or not a.get('href'):
             continue
