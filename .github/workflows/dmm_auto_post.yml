@@ -1,32 +1,35 @@
-name: DMM Auto Post
+name: DMM 素人ジャンル自動投稿
 
 on:
   schedule:
-    - cron: '0 */4 * * *'   # ４時間おきにワークフローを起動
-  workflow_dispatch:       # 手動実行も可能にする
+    # GitHub Actions の cron は UTC なので、JST（Asia/Tokyo）0時／4時／8時／12時／16時／20時に実行したい場合は、
+    # UTC でそれぞれ 21時／0時／4時／8時／12時／16時 を指定します。
+    - cron: '0 21,0,4,8,12,16 * * *'  # 毎日6回（4時間おき）  
+  workflow_dispatch:  # 任意実行用
 
 jobs:
-  auto-post:
+  post:
     runs-on: ubuntu-latest
-    env:
-      WP_URL:             ${{ secrets.WP_URL }}
-      WP_USER:            ${{ secrets.WP_USER }}
-      WP_PASS:            ${{ secrets.WP_PASS }}
-      DMM_API_ID:         ${{ secrets.DMM_API_ID }}
-      DMM_AFFILIATE_ID:   ${{ secrets.DMM_AFFILIATE_ID }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
 
-      - name: Set up Python
+    steps:
+      - name: コードをチェックアウト
+        uses: actions/checkout@v3
+
+      - name: Python セットアップ
         uses: actions/setup-python@v4
         with:
-          python-version: '3.x'
+          python-version: '3.10'
 
-      - name: Install dependencies
+      - name: 依存ライブラリをインストール
         run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 python-wordpress-xmlrpc python-dotenv schedule
+          pip install -r requirements.txt
 
-      - name: Run DMM Auto Post (one-shot)
-        run: python dmm_auto_post.py
+      - name: 自動投稿スクリプト実行
+        env:
+          WP_URL:         ${{ secrets.WP_URL }}
+          WP_USER:        ${{ secrets.WP_USER }}
+          WP_PASS:        ${{ secrets.WP_PASS }}
+          DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
+          DMM_API_ID:     ${{ secrets.DMM_API_ID }}
+        run: |
+          python dmm_auto_post.py
