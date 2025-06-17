@@ -10,27 +10,25 @@ import time
 required_packages = [
     ('dotenv', 'python-dotenv>=0.21.0'),
     ('requests', 'requests>=2.31.0'),
-    ('wordpress_xmlrpc', 'python-wordpress-xmlrpc>=2.3'),
-    ('bs4', 'beautifulsoup4>=4.12.2')
+    ('bs4', 'beautifulsoup4>=4.12.2'),
+    ('wordpress_xmlrpc', 'python-wordpress-xmlrpc>=2.3')
 ]
 for module_name, pkg_spec in required_packages:
     try:
         __import__(module_name)
     except ImportError:
-        subprocess.check_call([
-            sys.executable, '-m', 'pip', 'install', pkg_spec
-        ])
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg_spec])
 
 # Now safe to import third-party libraries
 import requests
 from dotenv import load_dotenv
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+from bs4 import BeautifulSoup
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 import collections.abc
-from bs4 import BeautifulSoup
 
 # Compatibility patch for older wordpress_xmlrpc
 collections.Iterable = collections.abc.Iterable
@@ -47,9 +45,7 @@ def load_env():
     }
     missing = [k for k, v in env.items() if not v]
     if missing:
-        raise RuntimeError(
-            f"Missing environment variables: {', '.join(missing)}"
-        )
+        raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
     return env
 
 env = load_env()
@@ -59,125 +55,98 @@ WP_PASS = env['WP_PASS']
 AFF_ID = env['DMM_AFFILIATE_ID']
 API_ID = env['DMM_API_ID']
 
-# DMM Affiliate API endpoints
-GENRE_SEARCH_URL = 'https://api.dmm.com/affiliate/v3/GenreSearch'
-ITEM_LIST_URL = 'https://api.dmm.com/affiliate/v3/ItemList'
-ITEM_DETAIL_URL = 'https://api.dmm.com/affiliate/v3/ItemDetail'
-
 # Settings
-genre_keyword = '素人'
+LIST_URL = 'https://video.dmm.co.jp/amateur/list/?sort=date'
 max_posts = 10
-# Static genre ID for 素人
-GENRE_TARGET_ID = '8503'
 
 # Helper: build affiliate URL
 def make_affiliate_link(url: str) -> str:
     parsed = urlparse(url)
     qs = dict(parse_qsl(parsed.query))
     qs['affiliate_id'] = AFF_ID
-    return urlunparse(
-        (parsed.scheme, parsed.netloc, parsed.path,
-         parsed.params, urlencode(qs), parsed.fragment)
-    )
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(qs), parsed.fragment))
 
-# Fetch latest videos list using site DMM.R18 and service videoa
+# Fetch latest videos by scraping list page
 def fetch_latest_videos() -> list:
-    gid = GENRE_TARGET_ID
-    params = {
-        'api_id': API_ID,
-        'affiliate_id': AFF_ID,
-        'site': 'DMM.R18',      # Adult video site
-        'service': 'videoa',    # Amateur service
-        'genre_id': gid,
-        'sort': '-release_date',
-        'hits': max_posts,
-        'output': 'json'
-    }
     try:
-        r = requests.get(ITEM_LIST_URL, params=params, timeout=10)
-        r.raise_for_status()
+        resp = requests.get(LIST_URL, timeout=10)
+        resp.raise_for_status()
     except Exception as e:
-        print(f"DEBUG: ItemList API failed: {e}")
+        print(f"DEBUG: List page load failed: {e}")
         return []
-    items = r.json().get('result', {}).get('items', [])
+    soup = BeautifulSoup(resp.text, 'html.parser')
     vids = []
-    for it in items:
-        cid = it.get('content_id', '')
-        title = it.get('title', '').strip()
-        detail = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
+    for li in soup.select('li.list-box')[:max_posts]:
+        a = li.find('a', class_='tmb')
+        if not a or not a.get('href'):
+            continue
+        href = a['href']
+        detail = href if href.startswith('http') else f"https://www.dmm.co.jp{href}"
+        title = a.find('img').get('alt', '').strip() if a.find('img') else li.find('p', class_='title').get_text(strip=True)
+        cid = detail.rstrip('/').split('cid=')[-1]
         vids.append({'title': title, 'detail_url': detail, 'cid': cid})
-    print(f"DEBUG: Found {len(vids)} videos via API")
+    print(f"DEBUG: Scraped {len(vids)} videos from list page")
     return vids
 
-# Fetch sample images via ItemDetail API with same site/service
+# Fetch sample images via ItemDetail API
 def fetch_sample_images(cid: str) -> list:
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'site': 'DMM.R18',
-        'service': 'videoa',
+        'site': 'video',
+        'service': 'amateur',
         'item': cid,
         'output': 'json'
     }
     try:
-        r = requests.get(ITEM_DETAIL_URL, params=params, timeout=10)
+        r = requests.get('https://api.dmm.com/affiliate/v3/ItemDetail', params=params, timeout=10)
         r.raise_for_status()
     except Exception as e:
         print(f"DEBUG: ItemDetail API failed for {cid}: {e}")
         return []
-    items = r.json().get('result', {}).get('items', [])
-    if not items:
+    data = r.json().get('result', {}).get('items', [])
+    if not data:
         return []
-    imgs = items[0].get('sampleImageURL', {}).get('large', [])
+    imgs = data[0].get('sampleImageURL', {}).get('large', [])
     return [imgs] if isinstance(imgs, str) else imgs
 
 # Upload image to WordPress
 def upload_image(wp: Client, url: str) -> int:
     try:
-        data = requests.get(url, timeout=10).content
+        content = requests.get(url, timeout=10).content
     except Exception as e:
         print(f"DEBUG: Download failed: {e}")
         return None
     name = os.path.basename(urlparse(url).path)
-    media_data = {
-        'name': name,
-        'type': 'image/jpeg',
-        'bits': xmlrpc_client.Binary(data)
-    }
+    media_data = {'name': name, 'type': 'image/jpeg', 'bits': xmlrpc_client.Binary(content)}
     res = wp.call(media.UploadFile(media_data))
     return res.get('id')
 
 # Create WordPress post
 def create_wp_post(video: dict) -> bool:
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    existing = wp.call(
-        GetPosts({'post_status':'publish','s': video['title']})
-    )
+    existing = wp.call(GetPosts({'post_status': 'publish', 's': video['title']}))
     if any(p.title == video['title'] for p in existing):
-        print(f"→ Duplicate skipped: {video['title']}")
+        print(f"→ Skip duplicate: {video['title']}")
         return False
     imgs = fetch_sample_images(video['cid'])
     if not imgs:
         print(f"→ No images for: {video['title']}")
         return False
-    thumb = upload_image(wp, imgs[0])
+    thumb_id = upload_image(wp, imgs[0])
     aff = make_affiliate_link(video['detail_url'])
-    content = [
-        f"<p><a href='{aff}'><img src='{imgs[0]}' alt='{video['title']}'/></a></p>",
-        f"<p><a href='{aff}'>{video['title']}</a></p>"
+    parts = [
+        f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}' alt='{video['title']}'/></a></p>",
+        f"<p><a href='{aff}' target='_blank'>{video['title']}</a></p>"
     ]
     for img in imgs[1:]:
-        content.append(
-            f"<p><img src='{img}' alt='{video['title']}'/></p>"
-        )
-    content.append(
-        f"<p><a href='{aff}'>{video['title']}</a></p>"
-    )
+        parts.append(f"<p><img src='{img}' alt='{video['title']}'/></p>")
+    parts.append(f"<p><a href='{aff}' target='_blank'>{video['title']}</a></p>")
     post = WordPressPost()
     post.title = video['title']
-    post.content = "\n".join(content)
-    post.thumbnail = thumb
-    post.terms_names = {'category':['DMM動画'],'post_tag':[]}
+    post.content = "\n".join(parts)
+    post.thumbnail = thumb_id
+    post.terms_names = {'category': ['DMM動画'], 'post_tag': []}
     post.post_status = 'publish'
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {video['title']}")
@@ -186,8 +155,8 @@ def create_wp_post(video: dict) -> bool:
 # Main execution
 def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    for v in fetch_latest_videos():
-        if create_wp_post(v):
+    for video in fetch_latest_videos():
+        if create_wp_post(video):
             break
     else:
         print("No new videos to post.")
