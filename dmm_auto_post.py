@@ -79,10 +79,10 @@ def get_genre_id(keyword: str) -> str:
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'site': 'DMM.R18',      # Adult video site
-        'service': 'videoa',    # Amateur video service
+        'site': 'video',        # Amateur video site
+        'service': 'amateur',   # Amateur video category
         'keyword': keyword,     # Search by genre name keyword
-        'hits': '500',          # Max genres
+        'hits': '500',          # Max results
         'offset': '1',
         'output': 'json'
     }
@@ -122,11 +122,15 @@ def fetch_latest_videos() -> list:
         return []
     items = resp.json().get('result', {}).get('items', [])
     videos = []
-    for it in items:
+        for it in items:
+        cid = it.get('content_id', '')
+        title = it.get('title', '').strip()
+        # Build detail URL using videoc path
+        detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
         videos.append({
-            'title': it.get('title','').strip(),
-            'detail_url': it.get('URL',''),
-            'cid': it.get('content_id','')
+            'title': title,
+            'detail_url': detail_url,
+            'cid': cid
         })
     print(f"DEBUG: Found {len(videos)} videos via API")
     return videos
