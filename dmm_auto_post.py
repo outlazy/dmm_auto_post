@@ -1,6 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import sys
+import subprocess
+
+# --- Dependency bootstrap: install missing packages at runtime ---
+required_packages = [
+    'python-dotenv>=0.21.0',
+    'requests>=2.31.0',
+    'python-wordpress-xmlrpc>=3.0.0',
+    'beautifulsoup4>=4.12.2'
+]
+for pkg in required_packages:
+    name = pkg.split('>=')[0]
+    try:
+        __import__(name if name != 'python-dotenv' else 'dotenv')
+    except ImportError:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg])
+
 import os
 import collections
 import collections.abc
@@ -163,16 +180,13 @@ def create_wp_post(video: dict) -> bool:
         print(f"→ Skipping duplicate: {title}")
         return False
 
-    # Fetch sample images
     images = fetch_sample_images(video.get("cid", ""))
     if not images:
         print(f"→ No samples for: {title}, skipping.")
         return False
 
-    # Upload featured image
     thumb_id = upload_image(wp, images[0])
 
-    # Build post content
     aff_url = make_affiliate_link(video.get("detail_url", ""))
     parts = []
     parts.append(f'<p><a href="{aff_url}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
