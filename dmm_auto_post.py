@@ -6,22 +6,20 @@ import subprocess
 
 # --- Dependency bootstrap: install missing packages at runtime ---
 required_packages = [
-    'python-dotenv>=0.21.0',
-    'requests>=2.31.0',
-    'python-wordpress-xmlrpc>=3.0.0',
-    'beautifulsoup4>=4.12.2'
+    ('python-dotenv', 'dotenv', 'python-dotenv>=0.21.0'),
+    ('requests', 'requests', 'requests>=2.31.0'),
+    ('wordpress_xmlrpc', 'wordpress_xmlrpc', 'python-wordpress-xmlrpc>=2.3'),
+    ('bs4', 'bs4', 'beautifulsoup4>=4.12.2'),
 ]
-for pkg in required_packages:
-    name = pkg.split('>=')[0]
+for module_name, import_name, pkg in required_packages:
     try:
-        __import__(name if name != 'python-dotenv' else 'dotenv')
+        __import__(import_name)
     except ImportError:
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg])
 
 import os
 import collections
-import collections.abc
-# Compatibility patch for wordpress_xmlrpc
+import collections.abc  # Compatibility patch for wordpress_xmlrpc
 collections.Iterable = collections.abc.Iterable
 
 import time
@@ -52,7 +50,7 @@ def load_env() -> dict:
             raise RuntimeError(f"Missing environment variable: {name}")
     return env
 
-# Load and unpack environment
+# Load environment
 env = load_env()
 WP_URL = env["WP_URL"]
 WP_USER = env["WP_USER"]
@@ -60,10 +58,7 @@ WP_PASS = env["WP_PASS"]
 AFF_ID = env["DMM_AFFILIATE_ID"]
 API_ID = env["DMM_API_ID"]
 
-# Affiliate API endpoint
 ITEM_DETAIL_URL = "https://api.dmm.com/affiliate/v3/ItemDetail"
-
-# Settings for scraping and posting
 GENRE_TARGET_ID = "8503"  # amateur genre
 MAX_POST = 10
 
@@ -102,8 +97,6 @@ def fetch_latest_videos() -> list[dict]:
             continue
         href = a["href"]
         detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
-        # Extract title
-        title = ""
         img_tag = a.find("img")
         if img_tag and img_tag.get("alt"):
             title = img_tag.get("alt").strip()
@@ -111,7 +104,7 @@ def fetch_latest_videos() -> list[dict]:
             title_tag = li.find("p", class_="title")
             title = title_tag.get_text(strip=True) if title_tag else ""
         cid = detail_url.rstrip("/").split("/")[-1]
-        videos.append({"title": title, "detail_url": detail_url, "cid": cid, "description": ""})
+        videos.append({"title": title, "detail_url": detail_url, "cid": cid})
 
     print(f"DEBUG: HTML scraping returned {len(videos)} items")
     return videos
@@ -140,13 +133,10 @@ def fetch_sample_images(cid: str) -> list[str]:
     items = data.get("result", {}).get("items", [])
     if not items:
         return []
-
     samples = items[0].get("sampleImageURL", {}).get("large")
-    if isinstance(samples, list):
-        return samples
     if isinstance(samples, str):
         return [samples]
-    return []
+    return samples or []
 
 
 def upload_image(wp: Client, url: str) -> int:
@@ -159,11 +149,7 @@ def upload_image(wp: Client, url: str) -> int:
         print(f"DEBUG: Failed to download image {url}: {e}")
         return None
     name = os.path.basename(urlparse(url).path)
-    media_data = {
-        "name": name,
-        "type": "image/jpeg",
-        "bits": xmlrpc_client.Binary(img_data),
-    }
+    media_data = {"name": name, "type": "image/jpeg", "bits": xmlrpc_client.Binary(img_data)}
     res = wp.call(media.UploadFile(media_data))
     return res.get("id")
 
@@ -173,30 +159,24 @@ def create_wp_post(video: dict) -> bool:
     Create a WordPress post for a single video. Returns True if posted.
     """
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    title = video.get("title", "")
-    # Check for duplicates
+    title = video["title"]
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if any(p.title == title for p in existing):
         print(f"→ Skipping duplicate: {title}")
         return False
-
-    images = fetch_sample_images(video.get("cid", ""))
+    images = fetch_sample_images(video["cid"])
     if not images:
         print(f"→ No samples for: {title}, skipping.")
         return False
-
     thumb_id = upload_image(wp, images[0])
-
-    aff_url = make_affiliate_link(video.get("detail_url", ""))
-    parts = []
-    parts.append(f'<p><a href="{aff_url}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
-    parts.append(f'<p><a href="{aff_url}" target="_blank">{title}</a></p>')
-    if video.get("description"):
-        parts.append(f'<div>{video.get("description")}</div>')
+    aff_url = make_affiliate_link(video["detail_url"])
+    parts = [
+        f'<p><a href="{aff_url}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>',
+        f'<p><a href="{aff_url}" target="_blank">{title}</a></p>'
+    ]
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
     parts.append(f'<p><a href="{aff_url}" target="_blank">{title}</a></p>')
-
     post = WordPressPost()
     post.title = title
     post.content = "\n".join(parts)
@@ -210,8 +190,7 @@ def create_wp_post(video: dict) -> bool:
 
 def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    videos = fetch_latest_videos()
-    for video in videos:
+    for video in fetch_latest_videos():
         if create_wp_post(video):
             break
     else:
