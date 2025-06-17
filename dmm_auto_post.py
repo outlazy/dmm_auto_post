@@ -67,11 +67,14 @@ def make_affiliate_link(url: str) -> str:
 
 # Fetch latest videos via DMM API
 def fetch_latest_videos() -> list:
+    """
+    Fetch latest videos via DMM Affiliate API (amateur genre).
+    """
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'site': 'DMM.R18',
-        'service': 'videoa',
+        'site': 'video',           # use 'video' for amateur listings
+        'service': 'amateur',      # amateur category service
         'genre_id': GENRE_TARGET_ID,
         'sort': '-release_date',
         'hits': MAX_POST,
@@ -90,7 +93,7 @@ def fetch_latest_videos() -> list:
         url = item.get('URL', '')
         cid = item.get('content_id', '')
         videos.append({'title': title, 'detail_url': url, 'cid': cid})
-    print(f"DEBUG: Found {len(videos)} items via API")
+    print(f"DEBUG: Found {len(videos)} items via API (amateur)")
     return videos
 
 # Fetch sample images
