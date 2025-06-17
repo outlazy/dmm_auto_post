@@ -4,7 +4,7 @@
 import sys
 import subprocess
 
-# --- Bootstrap dependencies ---
+# --- Bootstrap dependencies: install missing packages at runtime ---
 required_packages = [
     ('dotenv', 'python-dotenv>=0.21.0'),
     ('requests', 'requests>=2.31.0'),
@@ -17,7 +17,7 @@ for module, pkg in required_packages:
     except ImportError:
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg])
 
-# Now safe to import non-builtins
+# Safe to import installed packages
 import os
 import time
 import requests
@@ -27,8 +27,8 @@ from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
-from bs4 import BeautifulSoup
 import collections.abc
+from bs4 import BeautifulSoup
 
 # Compatibility patch for wordpress_xmlrpc
 collections.Iterable = collections.abc.Iterable
@@ -55,10 +55,10 @@ WP_PASS = env['WP_PASS']
 AFF_ID = env['DMM_AFFILIATE_ID']
 API_ID = env['DMM_API_ID']
 
-# API endpoints
-genre_search_url = 'https://api.dmm.com/affiliate/v3/GenreSearch'
-item_list_url = 'https://api.dmm.com/affiliate/v3/ItemList'
-item_detail_url = 'https://api.dmm.com/affiliate/v3/ItemDetail'
+# DMM Affiliate API endpoints
+GENRE_SEARCH_URL = 'https://api.dmm.com/affiliate/v3/GenreSearch'
+ITEM_LIST_URL = 'https://api.dmm.com/affiliate/v3/ItemList'
+ITEM_DETAIL_URL = 'https://api.dmm.com/affiliate/v3/ItemDetail'
 
 # Settings
 genre_keyword = '素人'
@@ -74,27 +74,28 @@ def make_affiliate_link(url: str) -> str:
 # Retrieve genre ID via GenreSearch API
 def get_genre_id(keyword: str) -> str:
     """
-    Use GenreSearch API to find genre ID matching keyword.
+    Use GenreSearch API ('floor search') to find genre ID matching keyword.
     """
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'site': 'DMM.R18',        # use adult video site
-        'service': 'videoa',      # amateur video category service
+        'floor_id': '43',          # Adult video floor
+        'hits': '500',             # Retrieve up to 500 genres
+        'offset': '1',
         'output': 'json'
     }
     try:
-        resp = requests.get(genre_search_url, params=params, timeout=10)
+        resp = requests.get(GENRE_SEARCH_URL, params=params, timeout=10)
         resp.raise_for_status()
     except Exception as e:
         print(f"DEBUG: GenreSearch API failed: {e}")
         return ''
-    genres = resp.json().get('result', {}).get('genres', [])
+    data = resp.json().get('result', {})
+    genres = data.get('genres', [])
     for g in genres:
-        # match keyword in name or fallback to exact id list
         if keyword in g.get('name', ''):
             return g.get('id', '')
-    # fallback to first genre id if not found
+    # Fallback to first genre ID if not found
     return genres[0].get('id', '') if genres else ''
 
 # Fetch latest videos via ItemList API
@@ -114,7 +115,7 @@ def fetch_latest_videos() -> list:
         'output': 'json'
     }
     try:
-        resp = requests.get(item_list_url, params=params, timeout=10)
+        resp = requests.get(ITEM_LIST_URL, params=params, timeout=10)
         resp.raise_for_status()
     except Exception as e:
         print(f"DEBUG: ItemList API failed: {e}")
@@ -122,15 +123,26 @@ def fetch_latest_videos() -> list:
     items = resp.json().get('result', {}).get('items', [])
     videos = []
     for it in items:
-        videos.append({'title': it.get('title','').strip(), 'detail_url': it.get('URL',''), 'cid': it.get('content_id','')})
+        videos.append({
+            'title': it.get('title','').strip(),
+            'detail_url': it.get('URL',''),
+            'cid': it.get('content_id','')
+        })
     print(f"DEBUG: Found {len(videos)} videos via API")
     return videos
 
 # Fetch sample images via ItemDetail API
 def fetch_sample_images(cid: str) -> list:
-    params = {'api_id': API_ID, 'affiliate_id': AFF_ID, 'site': 'video', 'service': 'amateur', 'item': cid, 'output': 'json'}
+    params = {
+        'api_id': API_ID,
+        'affiliate_id': AFF_ID,
+        'site': 'video',
+        'service': 'amateur',
+        'item': cid,
+        'output': 'json'
+    }
     try:
-        resp = requests.get(item_detail_url, params=params, timeout=10)
+        resp = requests.get(ITEM_DETAIL_URL, params=params, timeout=10)
         resp.raise_for_status()
     except Exception as e:
         print(f"DEBUG: ItemDetail API failed for {cid}: {e}")
@@ -165,7 +177,10 @@ def create_wp_post(video: dict) -> bool:
         return False
     thumb = upload_image(wp, imgs[0])
     aff = make_affiliate_link(video['detail_url'])
-    parts = [f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}' alt='{title}'/></a></p>", f"<p><a href='{aff}' target='_blank'>{title}</a></p>"]
+    parts = [
+        f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}' alt='{title}'/></a></p>",
+        f"<p><a href='{aff}' target='_blank'>{title}</a></p>"
+    ]
     parts += [f"<p><img src='{i}' alt='{title}'/></p>" for i in imgs[1:]]
     parts.append(f"<p><a href='{aff}' target='_blank'>{title}</a></p>")
     post = WordPressPost()
@@ -182,7 +197,8 @@ def create_wp_post(video: dict) -> bool:
 def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
     for video in fetch_latest_videos():
-        if create_wp_post(video): break
+        if create_wp_post(video):
+            break
     else:
         print("No new videos to post.")
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
