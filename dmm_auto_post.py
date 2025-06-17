@@ -3,6 +3,8 @@
 
 import sys
 import subprocess
+import os
+import time
 
 # --- Bootstrap dependencies: install missing packages before any imports ---
 required_packages = [
@@ -19,9 +21,7 @@ for module_name, pkg_spec in required_packages:
             sys.executable, '-m', 'pip', 'install', pkg_spec
         ])
 
-# --- Now safe to import third-party libraries ---
-import os
-import time
+# Now safe to import third-party libraries
 import requests
 from dotenv import load_dotenv
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
@@ -80,43 +80,14 @@ def make_affiliate_link(url: str) -> str:
          parsed.params, urlencode(qs), parsed.fragment)
     )
 
-# Get genre ID via floor search API
-def get_genre_id(keyword: str) -> str:
-    """
-    Use GenreSearch API with floor_id to retrieve all genres,
-    then return the ID where keyword matches the genre name.
-    """
-    params = {
-        'api_id': API_ID,
-        'affiliate_id': AFF_ID,
-        'floor_id': '43',          # Adult video floor
-        'hits': '500',             # Max genres to retrieve
-        'offset': '1',
-        'output': 'json'
-    }
-    try:
-        r = requests.get(GENRE_SEARCH_URL, params=params, timeout=10)
-        r.raise_for_status()
-    except Exception as e:
-        print(f"DEBUG: GenreSearch failed: {e}")
-        return ''
-    genres = r.json().get('result', {}).get('genres', [])
-    for g in genres:
-        name = g.get('name', '')
-        if keyword in name:
-            return g.get('id', '')
-    # Fallback to default genre_keyword ID if not found
-    return genres[0].get('id', '') if genres else ''
-
-# Fetch latest videos list
+# Fetch latest videos list using site DMM.R18 and service videoa
 def fetch_latest_videos() -> list:
-    # Use static genre ID for 素人
     gid = GENRE_TARGET_ID
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'site': 'video',
-        'service': 'amateur',
+        'site': 'DMM.R18',      # Adult video site
+        'service': 'videoa',    # Amateur service
         'genre_id': gid,
         'sort': '-release_date',
         'hits': max_posts,
@@ -126,7 +97,7 @@ def fetch_latest_videos() -> list:
         r = requests.get(ITEM_LIST_URL, params=params, timeout=10)
         r.raise_for_status()
     except Exception as e:
-        print(f"DEBUG: ItemList failed: {e}")
+        print(f"DEBUG: ItemList API failed: {e}")
         return []
     items = r.json().get('result', {}).get('items', [])
     vids = []
@@ -138,23 +109,21 @@ def fetch_latest_videos() -> list:
     print(f"DEBUG: Found {len(vids)} videos via API")
     return vids
 
-# Fetch sample images via ItemDetail API
+# Fetch sample images via ItemDetail API with same site/service
 def fetch_sample_images(cid: str) -> list:
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'site': 'video',
-        'service': 'amateur',
+        'site': 'DMM.R18',
+        'service': 'videoa',
         'item': cid,
         'output': 'json'
     }
     try:
-        r = requests.get(
-            ITEM_DETAIL_URL, params=params, timeout=10
-        )
+        r = requests.get(ITEM_DETAIL_URL, params=params, timeout=10)
         r.raise_for_status()
     except Exception as e:
-        print(f"DEBUG: ItemDetail failed for {cid}: {e}")
+        print(f"DEBUG: ItemDetail API failed for {cid}: {e}")
         return []
     items = r.json().get('result', {}).get('items', [])
     if not items:
