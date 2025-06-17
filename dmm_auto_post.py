@@ -97,8 +97,7 @@ def get_genre_id(keyword: str) -> str:
 
 # Fetch latest videos list
 def fetch_latest_videos() -> list:
-    gid = get_genre_id(gen\
-re_keyword)
+        gid = get_genre_id(genre_keyword)
     if not gid:
         print("DEBUG: No genre ID")
         return []
