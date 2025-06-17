@@ -15,9 +15,11 @@ for module_name, pkg_spec in required_packages:
     try:
         __import__(module_name)
     except ImportError:
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg_spec])
+        subprocess.check_call([
+            sys.executable, '-m', 'pip', 'install', pkg_spec
+        ])
 
-# Now safe to import third-party libraries
+# --- Now safe to import third-party libraries ---
 import os
 import time
 import requests
@@ -45,7 +47,9 @@ def load_env():
     }
     missing = [k for k, v in env.items() if not v]
     if missing:
-        raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
+        raise RuntimeError(
+            f"Missing environment variables: {', '.join(missing)}"
+        )
     return env
 
 env = load_env()
@@ -69,7 +73,10 @@ def make_affiliate_link(url: str) -> str:
     parsed = urlparse(url)
     qs = dict(parse_qsl(parsed.query))
     qs['affiliate_id'] = AFF_ID
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(qs), parsed.fragment))
+    return urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path,
+         parsed.params, urlencode(qs), parsed.fragment)
+    )
 
 # Get genre ID by keyword search
 def get_genre_id(keyword: str) -> str:
@@ -84,7 +91,9 @@ def get_genre_id(keyword: str) -> str:
         'output': 'json'
     }
     try:
-        r = requests.get(GENRE_SEARCH_URL, params=params, timeout=10)
+        r = requests.get(
+            GENRE_SEARCH_URL, params=params, timeout=10
+        )
         r.raise_for_status()
     except Exception as e:
         print(f"DEBUG: GenreSearch failed: {e}")
@@ -99,7 +108,7 @@ def get_genre_id(keyword: str) -> str:
 def fetch_latest_videos() -> list:
     gid = get_genre_id(genre_keyword)
     if not gid:
-        print("DEBUG: No genre ID")
+        print("DEBUG: No genre ID found")
         return []
     params = {
         'api_id': API_ID,
@@ -112,7 +121,9 @@ def fetch_latest_videos() -> list:
         'output': 'json'
     }
     try:
-        r = requests.get(ITEM_LIST_URL, params=params, timeout=10)
+        r = requests.get(
+            ITEM_LIST_URL, params=params, timeout=10
+        )
         r.raise_for_status()
     except Exception as e:
         print(f"DEBUG: ItemList failed: {e}")
@@ -122,9 +133,13 @@ def fetch_latest_videos() -> list:
     for it in items:
         cid = it.get('content_id', '')
         title = it.get('title', '').strip()
-        detail = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
-        vids.append({'title': title, 'detail_url': detail, 'cid': cid})
-    print(f"DEBUG: Found {len(vids)} videos")
+        detail = (
+            f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
+        )
+        vids.append(
+            {'title': title, 'detail_url': detail, 'cid': cid}
+        )
+    print(f"DEBUG: Found {len(vids)} videos via API")
     return vids
 
 # Fetch sample images via ItemDetail API
@@ -138,10 +153,12 @@ def fetch_sample_images(cid: str) -> list:
         'output': 'json'
     }
     try:
-        r = requests.get(ITEM_DETAIL_URL, params=params, timeout=10)
+        r = requests.get(
+            ITEM_DETAIL_URL, params=params, timeout=10
+        )
         r.raise_for_status()
     except Exception as e:
-        print(f"DEBUG: ItemDetail failed: {e}")
+        print(f"DEBUG: ItemDetail failed for {cid}: {e}")
         return []
     items = r.json().get('result', {}).get('items', [])
     if not items:
@@ -157,14 +174,20 @@ def upload_image(wp: Client, url: str) -> int:
         print(f"DEBUG: Download failed: {e}")
         return None
     name = os.path.basename(urlparse(url).path)
-    media_data = {'name': name, 'type': 'image/jpeg', 'bits': xmlrpc_client.Binary(data)}
+    media_data = {
+        'name': name,
+        'type': 'image/jpeg',
+        'bits': xmlrpc_client.Binary(data)
+    }
     res = wp.call(media.UploadFile(media_data))
     return res.get('id')
 
 # Create WordPress post
 def create_wp_post(video: dict) -> bool:
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    existing = wp.call(GetPosts({'post_status':'publish','s': video['title']}))
+    existing = wp.call(
+        GetPosts({'post_status':'publish','s': video['title']})
+    )
     if any(p.title == video['title'] for p in existing):
         print(f"→ Duplicate skipped: {video['title']}")
         return False
@@ -174,10 +197,17 @@ def create_wp_post(video: dict) -> bool:
         return False
     thumb = upload_image(wp, imgs[0])
     aff = make_affiliate_link(video['detail_url'])
-    content = [f"<p><a href='{aff}'><img src='{imgs[0]}' alt='{video['title']}'/></a></p>", f"<p><a href='{aff}'>{video['title']}</a></p>"]
+    content = [
+        f"<p><a href='{aff}'><img src='{imgs[0]}' alt='{video['title']}'/></a></p>",
+        f"<p><a href='{aff}'>{video['title']}</a></p>"
+    ]
     for img in imgs[1:]:
-        content.append(f"<p><img src='{img}' alt='{video['title']}'/></p>")
-    content.append(f"<p><a href='{aff}'>{video['title']}</a></p>")
+        content.append(
+            f"<p><img src='{img}' alt='{video['title']}'/></p>"
+        )
+    content.append(
+        f"<p><a href='{aff}'>{video['title']}</a></p>"
+    )
     post = WordPressPost()
     post.title = video['title']
     post.content = "\n".join(content)
