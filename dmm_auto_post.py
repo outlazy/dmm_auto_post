@@ -122,7 +122,7 @@ def fetch_latest_videos() -> list:
         return []
     items = resp.json().get('result', {}).get('items', [])
     videos = []
-        for it in items:
+    for it in items:
         cid = it.get('content_id', '')
         title = it.get('title', '').strip()
         # Build detail URL using videoc path
@@ -205,7 +205,7 @@ def main():
             break
     else:
         print("No new videos to post.")
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')] Job finished")
 
 if __name__ == '__main__':
     main()
