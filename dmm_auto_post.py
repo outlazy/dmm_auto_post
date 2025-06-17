@@ -22,7 +22,7 @@ for module_name, pkg_spec in required_packages:
 # Now safe to import third-party libraries
 import requests
 from dotenv import load_dotenv
-from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode, urljoin
 from bs4 import BeautifulSoup
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
@@ -93,7 +93,7 @@ def fetch_latest_videos() -> list:
             return []
 
     vids = []
-    for li in soup.select('li.list-box')[:max_posts]:
+    for li in soup.select('ul.list-box li')[:max_posts]:
         a = li.find('a', class_='tmb')
         if not a or not a.get('href'):
             continue
