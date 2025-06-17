@@ -3,21 +3,6 @@
 
 import sys
 import subprocess
-
-# --- Bootstrap dependencies: install missing packages at runtime ---
-required_packages = [
-    ('dotenv', 'python-dotenv>=0.21.0'),
-    ('requests', 'requests>=2.31.0'),
-    ('wordpress_xmlrpc', 'python-wordpress-xmlrpc>=2.3'),
-    ('bs4', 'beautifulsoup4>=4.12.2')
-]
-for module, pkg in required_packages:
-    try:
-        __import__(module)
-    except ImportError:
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg])
-
-# Safe to import installed packages
 import os
 import time
 import requests
@@ -29,6 +14,19 @@ from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 import collections.abc
 from bs4 import BeautifulSoup
+
+# Bootstrap dependencies
+required_packages = [
+    ('dotenv', 'python-dotenv>=0.21.0'),
+    ('requests', 'requests>=2.31.0'),
+    ('wordpress_xmlrpc', 'python-wordpress-xmlrpc>=2.3'),
+    ('bs4', 'beautifulsoup4>=4.12.2')
+]
+for module, pkg in required_packages:
+    try:
+        __import__(module)
+    except ImportError:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg])
 
 # Compatibility patch for wordpress_xmlrpc
 collections.Iterable = collections.abc.Iterable
@@ -55,7 +53,7 @@ WP_PASS = env['WP_PASS']
 AFF_ID = env['DMM_AFFILIATE_ID']
 API_ID = env['DMM_API_ID']
 
-# DMM Affiliate API endpoints
+# API endpoints
 GENRE_SEARCH_URL = 'https://api.dmm.com/affiliate/v3/GenreSearch'
 ITEM_LIST_URL = 'https://api.dmm.com/affiliate/v3/ItemList'
 ITEM_DETAIL_URL = 'https://api.dmm.com/affiliate/v3/ItemDetail'
@@ -73,16 +71,13 @@ def make_affiliate_link(url: str) -> str:
 
 # Retrieve genre ID via GenreSearch API
 def get_genre_id(keyword: str) -> str:
-    """
-    Use GenreSearch API to find genre ID matching keyword.
-    """
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'site': 'video',        # Amateur video site
-        'service': 'amateur',   # Amateur video category
-        'keyword': keyword,     # Search by genre name keyword
-        'hits': '500',          # Max results
+        'site': 'video',
+        'service': 'amateur',
+        'keyword': keyword,
+        'hits': '500',
         'offset': '1',
         'output': 'json'
     }
@@ -125,13 +120,8 @@ def fetch_latest_videos() -> list:
     for it in items:
         cid = it.get('content_id', '')
         title = it.get('title', '').strip()
-        # Build detail URL using videoc path
         detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
-        videos.append({
-            'title': title,
-            'detail_url': detail_url,
-            'cid': cid
-        })
+        videos.append({'title': title, 'detail_url': detail_url, 'cid': cid})
     print(f"DEBUG: Found {len(videos)} videos via API")
     return videos
 
@@ -171,7 +161,7 @@ def upload_image(wp: Client, url: str) -> int:
 def create_wp_post(video: dict) -> bool:
     wp = Client(WP_URL, WP_USER, WP_PASS)
     title = video['title']
-    existing = wp.call(GetPosts({'post_status':'publish','s':title}))
+    existing = wp.call(GetPosts({'post_status':'publish','s': title}))
     if any(p.title == title for p in existing):
         print(f"→ Skip duplicate: {title}")
         return False
@@ -181,17 +171,14 @@ def create_wp_post(video: dict) -> bool:
         return False
     thumb = upload_image(wp, imgs[0])
     aff = make_affiliate_link(video['detail_url'])
-    parts = [
-        f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}' alt='{title}'/></a></p>",
-        f"<p><a href='{aff}' target='_blank'>{title}</a></p>"
-    ]
+    parts = [f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}' alt='{title}'/></a></p>", f"<p><a href='{aff}' target='_blank'>{title}</a></p>"]
     parts += [f"<p><img src='{i}' alt='{title}'/></p>" for i in imgs[1:]]
     parts.append(f"<p><a href='{aff}' target='_blank'>{title}</a></p>")
     post = WordPressPost()
     post.title = title
     post.content = "\n".join(parts)
     post.thumbnail = thumb
-    post.terms_names = {'category':['DMM動画'],'post_tag':[]}
+    post.terms_names = {'category': ['DMM動画'], 'post_tag': []}
     post.post_status = 'publish'
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {title}")
@@ -205,7 +192,7 @@ def main():
             break
     else:
         print("No new videos to post.")
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')] Job finished")
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
 
 if __name__ == '__main__':
     main()
