@@ -74,13 +74,15 @@ def make_affiliate_link(url: str) -> str:
 # Retrieve genre ID via GenreSearch API
 def get_genre_id(keyword: str) -> str:
     """
-    Use GenreSearch API ('floor search') to find genre ID matching keyword.
+    Use GenreSearch API to find genre ID matching keyword.
     """
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'floor_id': '43',          # Adult video floor
-        'hits': '500',             # Retrieve up to 500 genres
+        'site': 'DMM.R18',      # Adult video site
+        'service': 'videoa',    # Amateur video service
+        'keyword': keyword,     # Search by genre name keyword
+        'hits': '500',          # Max genres
         'offset': '1',
         'output': 'json'
     }
@@ -90,12 +92,10 @@ def get_genre_id(keyword: str) -> str:
     except Exception as e:
         print(f"DEBUG: GenreSearch API failed: {e}")
         return ''
-    data = resp.json().get('result', {})
-    genres = data.get('genres', [])
+    genres = resp.json().get('result', {}).get('genres', [])
     for g in genres:
         if keyword in g.get('name', ''):
             return g.get('id', '')
-    # Fallback to first genre ID if not found
     return genres[0].get('id', '') if genres else ''
 
 # Fetch latest videos via ItemList API
