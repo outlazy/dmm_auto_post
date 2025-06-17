@@ -27,9 +27,9 @@ from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
+import collections.abc
 
 # Compatibility patch
-import collections.abc
 collections.Iterable = collections.abc.Iterable
 
 # Load environment
@@ -52,10 +52,11 @@ env = load_env()
 WP_URL, WP_USER, WP_PASS = env['WP_URL'], env['WP_USER'], env['WP_PASS']
 AFF_ID, API_ID = env['DMM_AFFILIATE_ID'], env['DMM_API_ID']
 
-# Constants
+# API Endpoints and Defaults
 ITEM_LIST_URL = 'https://api.dmm.com/affiliate/v3/ItemList'
 ITEM_DETAIL_URL = 'https://api.dmm.com/affiliate/v3/ItemDetail'
-GENRE_TARGET_ID = '8503'
+GENRE_SEARCH_URL = 'https://api.dmm.com/affiliate/v3/GenreSearch'
+GENRE_KEYWORD = '素人'
 MAX_POST = 10
 
 # Build affiliate link
@@ -65,17 +66,41 @@ def make_affiliate_link(url: str) -> str:
     qs['affiliate_id'] = AFF_ID
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(qs), parsed.fragment))
 
-# Fetch latest videos via DMM API
-def fetch_latest_videos() -> list:
-    """
-    Fetch latest videos via DMM Affiliate API (amateur genre).
-    """
+# Retrieve genre ID by keyword
+
+def get_genre_id(keyword: str) -> str:
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'site': 'video',           # use 'video' for amateur listings
-        'service': 'amateur',      # amateur category service
-        'genre_id': GENRE_TARGET_ID,
+        'site': 'video',
+        'service': 'amateur',
+        'keyword': keyword,
+        'output': 'json'
+    }
+    try:
+        resp = requests.get(GENRE_SEARCH_URL, params=params, timeout=10)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"DEBUG: GenreSearch API failed: {e}")
+        return ''
+    genres = resp.json().get('result', {}).get('genres', [])
+    for g in genres:
+        if keyword in g.get('name', ''):
+            return g.get('id')
+    return genres[0].get('id') if genres else ''
+
+# Fetch latest videos via DMM API
+def fetch_latest_videos() -> list:
+    genre_id = get_genre_id(GENRE_KEYWORD)
+    if not genre_id:
+        print("DEBUG: No genre ID found")
+        return []
+    params = {
+        'api_id': API_ID,
+        'affiliate_id': AFF_ID,
+        'site': 'video',
+        'service': 'amateur',
+        'genre_id': genre_id,
         'sort': '-release_date',
         'hits': MAX_POST,
         'output': 'json'
@@ -86,14 +111,15 @@ def fetch_latest_videos() -> list:
     except Exception as e:
         print(f"DEBUG: ItemList API failed: {e}")
         return []
-    data = resp.json().get('result', {}).get('items', [])
+    items = resp.json().get('result', {}).get('items', [])
     videos = []
-    for item in data:
-        title = item.get('title', '').strip()
-        url = item.get('URL', '')
-        cid = item.get('content_id', '')
-        videos.append({'title': title, 'detail_url': url, 'cid': cid})
-    print(f"DEBUG: Found {len(videos)} items via API (amateur)")
+    for i in items:
+        videos.append({
+            'title': i.get('title','').strip(),
+            'detail_url': i.get('URL',''),
+            'cid': i.get('content_id','')
+        })
+    print(f"DEBUG: Found {len(videos)} videos via API")
     return videos
 
 # Fetch sample images
@@ -110,12 +136,12 @@ def fetch_sample_images(cid: str) -> list:
         resp = requests.get(ITEM_DETAIL_URL, params=params, timeout=10)
         resp.raise_for_status()
     except Exception as e:
-        print(f"DEBUG: ItemDetail API for {cid} failed: {e}")
+        print(f"DEBUG: ItemDetail API failed for {cid}: {e}")
         return []
-    items = resp.json().get('result', {}).get('items', [])
-    if not items:
+    result = resp.json().get('result', {}).get('items', [])
+    if not result:
         return []
-    samples = items[0].get('sampleImageURL', {}).get('large', [])
+    samples = result[0].get('sampleImageURL', {}).get('large', [])
     return [samples] if isinstance(samples, str) else samples
 
 # Upload image to WordPress
@@ -140,12 +166,15 @@ def create_wp_post(video: dict) -> bool:
         return False
     imgs = fetch_sample_images(video['cid'])
     if not imgs:
-        print(f"→ No samples for: {title}")
+        print(f"→ No images for: {title}")
         return False
     thumb = upload_image(wp, imgs[0])
-    link = make_affiliate_link(video['detail_url'])
-    parts = [f"<p><a href='{link}' target='_blank'><img src='{imgs[0]}'/></a></p>", f"<p><a href='{link}' target='_blank'>{title}</a></p>"]
-    parts += [f"<p><img src='{i}' alt='{title}'/></p>" for i in imgs[1:]] + [f"<p><a href='{link}' target='_blank'>{title}</a></p>"]
+    aff = make_affiliate_link(video['detail_url'])
+    parts = [
+        f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}' alt='{title}'/></a></p>",
+        f"<p><a href='{aff}' target='_blank'>{title}</a></p>"
+    ]
+    parts += [f"<p><img src='{i}' alt='{title}'/></p>" for i in imgs[1:]] + [f"<p><a href='{aff}' target='_blank'>{title}</a></p>"]
     post = WordPressPost()
     post.title = title
     post.content = "\n".join(parts)
@@ -159,11 +188,12 @@ def create_wp_post(video: dict) -> bool:
 # Main
 def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    for video in fetch_latest_videos():
-        if create_wp_post(video): break
+    for v in fetch_latest_videos():
+        if create_wp_post(v):
+            break
     else:
         print("No new videos to post.")
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
 
-if __name__ == '__main__':
+if __name__=='__main__':
     main()
