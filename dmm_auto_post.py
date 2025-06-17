@@ -67,6 +67,8 @@ ITEM_DETAIL_URL = 'https://api.dmm.com/affiliate/v3/ItemDetail'
 # Settings
 genre_keyword = '素人'
 max_posts = 10
+# Static genre ID for 素人
+GENRE_TARGET_ID = '8503'
 
 # Helper: build affiliate URL
 def make_affiliate_link(url: str) -> str:
@@ -108,10 +110,8 @@ def get_genre_id(keyword: str) -> str:
 
 # Fetch latest videos list
 def fetch_latest_videos() -> list:
-    gid = get_genre_id(genre_keyword)
-    if not gid:
-        print("DEBUG: No genre ID found")
-        return []
+    # Use static genre ID for 素人
+    gid = GENRE_TARGET_ID
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
@@ -123,9 +123,7 @@ def fetch_latest_videos() -> list:
         'output': 'json'
     }
     try:
-        r = requests.get(
-            ITEM_LIST_URL, params=params, timeout=10
-        )
+        r = requests.get(ITEM_LIST_URL, params=params, timeout=10)
         r.raise_for_status()
     except Exception as e:
         print(f"DEBUG: ItemList failed: {e}")
@@ -135,12 +133,8 @@ def fetch_latest_videos() -> list:
     for it in items:
         cid = it.get('content_id', '')
         title = it.get('title', '').strip()
-        detail = (
-            f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
-        )
-        vids.append(
-            {'title': title, 'detail_url': detail, 'cid': cid}
-        )
+        detail = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
+        vids.append({'title': title, 'detail_url': detail, 'cid': cid})
     print(f"DEBUG: Found {len(vids)} videos via API")
     return vids
 
