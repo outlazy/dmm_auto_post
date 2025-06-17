@@ -27,8 +27,8 @@ def load_env() -> dict:
         "WP_URL": os.getenv("WP_URL"),
         "WP_USER": os.getenv("WP_USER"),
         "WP_PASS": os.getenv("WP_PASS"),
-        "AFF_ID": os.getenv("DMM_AFFILIATE_ID"),
-        "API_ID": os.getenv("DMM_API_ID"),
+        "DMM_AFFILIATE_ID": os.getenv("DMM_AFFILIATE_ID"),
+        "DMM_API_ID": os.getenv("DMM_API_ID"),
     }
     for name, val in env.items():
         if not val:
@@ -40,14 +40,14 @@ env = load_env()
 WP_URL = env["WP_URL"]
 WP_USER = env["WP_USER"]
 WP_PASS = env["WP_PASS"]
-AFF_ID = env["AFF_ID"]
-API_ID = env["API_ID"]
+AFF_ID = env["DMM_AFFILIATE_ID"]
+API_ID = env["DMM_API_ID"]
 
 # Affiliate API endpoint
 ITEM_DETAIL_URL = "https://api.dmm.com/affiliate/v3/ItemDetail"
 
 # Settings for scraping and posting
-GENRE_TARGET_ID = "8503"  # amateur gyaru
+GENRE_TARGET_ID = "8503"  # amateur genre
 MAX_POST = 10
 
 
@@ -64,7 +64,7 @@ def make_affiliate_link(url: str) -> str:
 
 def fetch_latest_videos() -> list[dict]:
     """
-    Scrape latest amateur gyaru videos from the DMM HTML page.
+    Scrape latest amateur videos from DMM HTML page.
     """
     genre_url = f"https://video.dmm.co.jp/amateur/list/?genre={GENRE_TARGET_ID}"
     session = requests.Session()
@@ -85,7 +85,8 @@ def fetch_latest_videos() -> list[dict]:
             continue
         href = a["href"]
         detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
-        # Extract title from <img alt> or fallback to <p class="title">
+        # Extract title
+        title = ""
         img_tag = a.find("img")
         if img_tag and img_tag.get("alt"):
             title = img_tag.get("alt").strip()
@@ -95,7 +96,7 @@ def fetch_latest_videos() -> list[dict]:
         cid = detail_url.rstrip("/").split("/")[-1]
         videos.append({"title": title, "detail_url": detail_url, "cid": cid, "description": ""})
 
-    print(f"DEBUG: HTML scraping returned {len(videos)} items from genre page")
+    print(f"DEBUG: HTML scraping returned {len(videos)} items")
     return videos
 
 
