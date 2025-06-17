@@ -81,7 +81,7 @@ def fetch_latest_videos() -> list:
         return []
 
     soup = BeautifulSoup(resp.text, 'html.parser')
-    # If still on age-check page, click 'I Agree'
+    # If on age-check page, click 'I Agree'
     agree = soup.find('a', string=lambda t: t and 'Agree' in t)
     if agree and agree.get('href'):
         try:
@@ -93,13 +93,13 @@ def fetch_latest_videos() -> list:
             return []
 
     vids = []
-    for li in soup.select('li.list-box')[:max_posts]:
-        a = li.find('a', class_='tmb')
-        if not a or not a.get('href'):
-            continue
-        href = a['href']
+    # Use anchor.tmb elements directly for list items
+    els = soup.select('a.tmb')[:max_posts]
+    for a in els:
+        href = a.get('href')
         detail = href if href.startswith('http') else urljoin(LIST_URL, href)
-        title = a.find('img').get('alt', '').strip() if a.find('img') else ''
+        img = a.find('img')
+        title = img.get('alt', '').strip() if img and img.get('alt') else ''
         cid = detail.rstrip('/').split('cid=')[-1]
         vids.append({'title': title, 'detail_url': detail, 'cid': cid})
     print(f"DEBUG: Scraped {len(vids)} videos from list page")
