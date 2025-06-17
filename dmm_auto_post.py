@@ -66,23 +66,40 @@ def make_affiliate_link(url: str) -> str:
     qs['affiliate_id'] = AFF_ID
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(qs), parsed.fragment))
 
-# Fetch latest videos by scraping list page
+# Fetch latest videos by scraping list page with age-check bypass
 def fetch_latest_videos() -> list:
+    session = requests.Session()
+    session.headers.update({'User-Agent': 'Mozilla/5.0'})
+    # Bypass age check
+    session.cookies.set('ckcy', '1', domain='.dmm.co.jp')
+
     try:
-        resp = requests.get(LIST_URL, timeout=10)
+        resp = session.get(LIST_URL, timeout=10)
         resp.raise_for_status()
     except Exception as e:
         print(f"DEBUG: List page load failed: {e}")
         return []
+
     soup = BeautifulSoup(resp.text, 'html.parser')
+    # If still on age-check page, click 'I Agree'
+    agree = soup.find('a', string=lambda t: t and 'Agree' in t)
+    if agree and agree.get('href'):
+        try:
+            resp = session.get(urljoin(LIST_URL, agree['href']), timeout=10)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+        except Exception as e:
+            print(f"DEBUG: Age bypass failed: {e}")
+            return []
+
     vids = []
     for li in soup.select('li.list-box')[:max_posts]:
         a = li.find('a', class_='tmb')
         if not a or not a.get('href'):
             continue
         href = a['href']
-        detail = href if href.startswith('http') else f"https://www.dmm.co.jp{href}"
-        title = a.find('img').get('alt', '').strip() if a.find('img') else li.find('p', class_='title').get_text(strip=True)
+        detail = href if href.startswith('http') else urljoin(LIST_URL, href)
+        title = a.find('img').get('alt', '').strip() if a.find('img') else ''
         cid = detail.rstrip('/').split('cid=')[-1]
         vids.append({'title': title, 'detail_url': detail, 'cid': cid})
     print(f"DEBUG: Scraped {len(vids)} videos from list page")
