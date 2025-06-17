@@ -15,7 +15,7 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 import collections.abc
 from bs4 import BeautifulSoup
 
-# Bootstrap dependencies
+# --- Bootstrap dependencies: install missing packages at runtime ---
 required_packages = [
     ('dotenv', 'python-dotenv>=0.21.0'),
     ('requests', 'requests>=2.31.0'),
@@ -53,7 +53,7 @@ WP_PASS = env['WP_PASS']
 AFF_ID = env['DMM_AFFILIATE_ID']
 API_ID = env['DMM_API_ID']
 
-# API endpoints
+# DMM Affiliate API endpoints
 GENRE_SEARCH_URL = 'https://api.dmm.com/affiliate/v3/GenreSearch'
 ITEM_LIST_URL = 'https://api.dmm.com/affiliate/v3/ItemList'
 ITEM_DETAIL_URL = 'https://api.dmm.com/affiliate/v3/ItemDetail'
@@ -95,7 +95,7 @@ def get_genre_id(keyword: str) -> str:
 
 # Fetch latest videos via ItemList API
 def fetch_latest_videos() -> list:
-    genre_id = get_genre_id(genre_keyword)
+    genre_id = get_genre_id(genres_keyword if 'genres_keyword' in globals() else genre_keyword)
     if not genre_id:
         print("DEBUG: No genre ID found")
         return []
@@ -120,6 +120,7 @@ def fetch_latest_videos() -> list:
     for it in items:
         cid = it.get('content_id', '')
         title = it.get('title', '').strip()
+        # Construct detail URL matching site pattern
         detail_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
         videos.append({'title': title, 'detail_url': detail_url, 'cid': cid})
     print(f"DEBUG: Found {len(videos)} videos via API")
@@ -178,7 +179,7 @@ def create_wp_post(video: dict) -> bool:
     post.title = title
     post.content = "\n".join(parts)
     post.thumbnail = thumb
-    post.terms_names = {'category': ['DMM動画'], 'post_tag': []}
+    post.terms_names = {'category':['DMM動画'],'post_tag':[]}
     post.post_status = 'publish'
     wp.call(posts.NewPost(post))
     print(f"✔ Posted: {title}")
