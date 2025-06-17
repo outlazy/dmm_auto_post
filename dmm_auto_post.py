@@ -3,17 +3,6 @@
 
 import sys
 import subprocess
-import os
-import time
-import requests
-from dotenv import load_dotenv
-from bs4 import BeautifulSoup
-from wordpress_xmlrpc import Client, WordPressPost
-from wordpress_xmlrpc.methods import media, posts
-from wordpress_xmlrpc.methods.posts import GetPosts
-from wordpress_xmlrpc.compat import xmlrpc_client
-from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
-import collections.abc
 
 # --- Dependency bootstrap: install missing packages at runtime ---
 required_packages = [
@@ -27,6 +16,19 @@ for module_name, import_name, pkg in required_packages:
         __import__(import_name)
     except ImportError:
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg])
+
+# After bootstrap, import libraries
+import os
+import time
+import requests
+from dotenv import load_dotenv
+from bs4 import BeautifulSoup
+from wordpress_xmlrpc import Client, WordPressPost
+from wordpress_xmlrpc.methods import media, posts
+from wordpress_xmlrpc.methods.posts import GetPosts
+from wordpress_xmlrpc.compat import xmlrpc_client
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+import collections.abc
 
 # Compatibility patch for wordpress_xmlrpc
 collections.Iterable = collections.abc.Iterable
@@ -54,6 +56,7 @@ WP_PASS = env["WP_PASS"]
 AFF_ID = env["DMM_AFFILIATE_ID"]
 API_ID = env["DMM_API_ID"]
 
+# API endpoints and settings
 ITEM_DETAIL_URL = "https://api.dmm.com/affiliate/v3/ItemDetail"
 GENRE_LIST_URL = "https://video.dmm.co.jp/amateur/list/"
 GENRE_TARGET_ID = "8503"
@@ -64,7 +67,8 @@ def make_affiliate_link(url: str) -> str:
     parsed = urlparse(url)
     qs = dict(parse_qsl(parsed.query))
     qs["affiliate_id"] = AFF_ID
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(qs), parsed.fragment))
+    new_query = urlencode(qs)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
 
 def fetch_latest_videos() -> list[dict]:
@@ -73,7 +77,6 @@ def fetch_latest_videos() -> list[dict]:
     session.headers.update({"User-Agent": "Mozilla/5.0"})
     session.cookies.set("ckcy", "1", domain=".dmm.co.jp")
 
-    # Initial page load
     try:
         resp = session.get(url, timeout=10)
         resp.raise_for_status()
@@ -82,7 +85,7 @@ def fetch_latest_videos() -> list[dict]:
         return []
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    # Age check bypass: look for agreement link
+    # Age check bypass
     agree = soup.select_one("a[href*='adult']") or soup.find("a", string=lambda t: t and 'Agree' in t)
     if agree and agree.get('href'):
         agree_url = agree['href']
@@ -152,9 +155,9 @@ def create_wp_post(video: dict) -> bool:
         print(f"→ No images for: {title}")
         return False
     thumb = upload_image(wp, imgs[0])
-    url = make_affiliate_link(video['detail_url'])
-    content = [f"<p><a href='{url}' target='_blank'><img src='{imgs[0]}' alt='{title}'/></a></p>", f"<p><a href='{url}' target='_blank'>{title}</a></p>"]
-    content += [f"<p><img src='{i}' alt='{title}'/></p>" for i in imgs[1:]] + [f"<p><a href='{url}' target='_blank'>{title}</a></p>"]
+    aff_url = make_affiliate_link(video['detail_url'])
+    content = [f"<p><a href='{aff_url}' target='_blank'><img src='{imgs[0]}' alt='{title}'/></a></p>", f"<p><a href='{aff_url}' target='_blank'>{title}</a></p>"]
+    content += [f"<p><img src='{i}' alt='{title}'/></p>" for i in imgs[1:]] + [f"<p><a href='{aff_url}' target='_blank'>{title}</a></p>"]
     post = WordPressPost()
     post.title = title
     post.content = "\n".join(content)
@@ -170,7 +173,8 @@ def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Start")
     videos = fetch_latest_videos()
     for v in videos:
-        if create_wp_post(v): break
+        if create_wp_post(v):
+            break
     else:
         print("No new videos.")
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] End")
