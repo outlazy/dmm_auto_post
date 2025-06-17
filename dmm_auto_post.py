@@ -73,11 +73,14 @@ def make_affiliate_link(url: str) -> str:
 
 # Retrieve genre ID via GenreSearch API
 def get_genre_id(keyword: str) -> str:
+    """
+    Use GenreSearch API to find genre ID matching keyword.
+    """
     params = {
         'api_id': API_ID,
         'affiliate_id': AFF_ID,
-        'site': 'video',
-        'service': 'amateur',
+        'site': 'DMM.R18',        # use adult video site
+        'service': 'videoa',      # amateur video category service
         'output': 'json'
     }
     try:
@@ -88,8 +91,10 @@ def get_genre_id(keyword: str) -> str:
         return ''
     genres = resp.json().get('result', {}).get('genres', [])
     for g in genres:
+        # match keyword in name or fallback to exact id list
         if keyword in g.get('name', ''):
-            return g.get('id')
+            return g.get('id', '')
+    # fallback to first genre id if not found
     return genres[0].get('id', '') if genres else ''
 
 # Fetch latest videos via ItemList API
