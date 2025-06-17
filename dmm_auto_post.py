@@ -80,7 +80,7 @@ def fetch_latest_videos() -> list:
         return []
 
     soup = BeautifulSoup(resp.text, 'html.parser')
-    # Age check detection
+    # Age check bypass
     agree = soup.find('a', string=lambda t: t and 'Agree' in t)
     if agree and agree.get('href'):
         agree_url = urljoin(resp.url, agree['href'])
@@ -93,18 +93,17 @@ def fetch_latest_videos() -> list:
             return []
 
     items = []
-    for li in soup.select('li.list-box')[:MAX_POST]:
-        a = li.find('a', class_='tmb')
-        if not a or not a.get('href'):
-            continue
+    # Updated selector: collect anchor tags with thumbnail class
+    links = soup.select('a.tmb[href]')
+    for a in links[:MAX_POST]:
         href = a['href']
         detail = href if href.startswith('http') else urljoin(resp.url, href)
         img = a.find('img')
-        title = img.get('alt', '').strip() if img and img.get('alt') else (li.find('p', class_='title').get_text(strip=True) if li.find('p', class_='title') else '')
+        title = img.get('alt','').strip() if img and img.get('alt') else ''
         cid = detail.rstrip('/').split('/')[-1]
         items.append({'title': title, 'detail_url': detail, 'cid': cid})
 
-    print(f"DEBUG: Found {len(items)} videos")
+    print(f"DEBUG: Found {len(items)} videos (via anchor.tmb)")
     return items
 
 # Fetch sample images
