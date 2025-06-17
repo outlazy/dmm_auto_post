@@ -1,118 +1,208 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
-import sys
+import collections
+import collections.abc
+# Compatibility patch for wordpress_xmlrpc
+collections.Iterable = collections.abc.Iterable
+
+import time
 import requests
-import textwrap
 from dotenv import load_dotenv
 from wordpress_xmlrpc import Client, WordPressPost
-from wordpress_xmlrpc.methods import posts, media
-from xmlrpc import client as xmlrpc_client
+from wordpress_xmlrpc.methods import media, posts
+from wordpress_xmlrpc.methods.posts import GetPosts
+from wordpress_xmlrpc.compat import xmlrpc_client
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+from bs4 import BeautifulSoup
 
-def fetch_latest_video(genre_id: str) -> dict | None:
+
+def load_env() -> dict:
     """
-    Fetch the latest video from DMM API for the given genre ID.
-    Returns a dict with title, detail_url, thumb, description or None if no items.
+    Load environment variables from .env and validate presence.
     """
-    api_id = os.getenv("DMM_API_ID")
-    affiliate_id = os.getenv("DMM_AFFILIATE_ID")
-    if not api_id or not affiliate_id:
-        print("Error: DMM_API_ID / DMM_AFFILIATE_ID not set in environment.")
-        sys.exit(1)
-    # Prepare API parameters
-    params = {
-        "api_id": api_id,
-        "affiliate_id": affiliate_id,
-        "site": os.getenv("DMM_SITE", "FANZA"),
-        "service": "digital",
-        "floor": "videoa",
-        "mono_genre_id": genre_id,
-        "hits": 1,
-        "sort": "date",
-        "output": "json"
+    load_dotenv()
+    env = {
+        "WP_URL": os.getenv("WP_URL"),
+        "WP_USER": os.getenv("WP_USER"),
+        "WP_PASS": os.getenv("WP_PASS"),
+        "AFF_ID": os.getenv("DMM_AFFILIATE_ID"),
+        "API_ID": os.getenv("DMM_API_ID"),
     }
-    # Call DMM API
-    response = requests.get("https://api.dmm.com/affiliate/v3/ItemList", params=params)
-    response.raise_for_status()
-    data = response.json()
+    for name, val in env.items():
+        if not val:
+            raise RuntimeError(f"Missing environment variable: {name}")
+    return env
+
+# Load and unpack environment
+env = load_env()
+WP_URL = env["WP_URL"]
+WP_USER = env["WP_USER"]
+WP_PASS = env["WP_PASS"]
+AFF_ID = env["AFF_ID"]
+API_ID = env["API_ID"]
+
+# Affiliate API endpoint
+ITEM_DETAIL_URL = "https://api.dmm.com/affiliate/v3/ItemDetail"
+
+# Settings for scraping and posting
+GENRE_TARGET_ID = "8503"  # amateur gyaru
+MAX_POST = 10
+
+
+def make_affiliate_link(url: str) -> str:
+    """
+    Append affiliate ID to DMM product URL.
+    """
+    parsed = urlparse(url)
+    qs = dict(parse_qsl(parsed.query))
+    qs["affiliate_id"] = AFF_ID
+    new_query = urlencode(qs)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+
+
+def fetch_latest_videos() -> list[dict]:
+    """
+    Scrape latest amateur gyaru videos from the DMM HTML page.
+    """
+    genre_url = f"https://video.dmm.co.jp/amateur/list/?genre={GENRE_TARGET_ID}"
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0"})
+    session.cookies.set("ckcy", "1", domain=".dmm.co.jp")
+    try:
+        resp = session.get(genre_url, timeout=10)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"DEBUG: HTML fetch failed: {e}")
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    videos = []
+    for li in soup.select("li.list-box")[:MAX_POST]:
+        a = li.find("a", class_="tmb")
+        if not a or not a.get("href"):
+            continue
+        href = a["href"]
+        detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
+        # Extract title from <img alt> or fallback to <p class="title">
+        img_tag = a.find("img")
+        if img_tag and img_tag.get("alt"):
+            title = img_tag.get("alt").strip()
+        else:
+            title_tag = li.find("p", class_="title")
+            title = title_tag.get_text(strip=True) if title_tag else ""
+        cid = detail_url.rstrip("/").split("/")[-1]
+        videos.append({"title": title, "detail_url": detail_url, "cid": cid, "description": ""})
+
+    print(f"DEBUG: HTML scraping returned {len(videos)} items from genre page")
+    return videos
+
+
+def fetch_sample_images(cid: str) -> list[str]:
+    """
+    Fetch sample image URLs from DMM Affiliate API.
+    """
+    params = {
+        "api_id": API_ID,
+        "affiliate_id": AFF_ID,
+        "site": "video",
+        "service": "amateur",
+        "item": cid,
+        "output": "json",
+    }
+    try:
+        resp = requests.get(ITEM_DETAIL_URL, params=params, timeout=10)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"DEBUG: ItemDetail API failed for cid {cid}: {e}")
+        return []
+
+    data = resp.json()
     items = data.get("result", {}).get("items", [])
     if not items:
-        return None
-    item = items[0]
-    # Extract detail URL
-    url_val = item.get("URL")
-    if isinstance(url_val, dict):
-        detail_url = url_val.get("item") or url_val.get("affiliate") or ""
-    else:
-        detail_url = url_val or ""
-    # Extract thumbnail
-    img_val = item.get("imageURL")
-    if isinstance(img_val, dict):
-        thumb = img_val.get("large") or img_val.get("small") or ""
-    else:
-        thumb = img_val or ""
-    return {
-        "title": item.get("title", ""),
-        "detail_url": detail_url,
-        "thumb": thumb,
-        "description": item.get("description", "")
-    }
+        return []
 
-def post_to_wp(item: dict):
+    samples = items[0].get("sampleImageURL", {}).get("large")
+    if isinstance(samples, list):
+        return samples
+    if isinstance(samples, str):
+        return [samples]
+    return []
+
+
+def upload_image(wp: Client, url: str) -> int:
     """
-    Post the item to WordPress if not duplicated.
+    Download and upload an image to WordPress, returning its media ID.
     """
-    wp_url = os.getenv("WP_URL")
-    wp_user = os.getenv("WP_USER")
-    wp_pass = os.getenv("WP_PASS")
-    if not (wp_url and wp_user and wp_pass):
-        print("Error: WP_URL / WP_USER / WP_PASS not set in environment.")
-        sys.exit(1)
-    wp = Client(wp_url, wp_user, wp_pass)
-    # Check duplicates
-    existing = wp.call(posts.GetPosts({"post_status": "publish", "s": item["title"]}))
-    if any(p.title == item["title"] for p in existing):
-        print(f"→ Skipping duplicate: {item['title']}")
-        return
-    # Upload thumbnail
-    thumb_id = None
-    if item.get("thumb"):
-        try:
-            img_data = requests.get(item["thumb"]).content
-            media_data = {
-                "name": os.path.basename(item["thumb"]),
-                "type": "image/jpeg",
-                "bits": xmlrpc_client.Binary(img_data)
-            }
-            resp_media = wp.call(media.UploadFile(media_data))
-            thumb_id = resp_media.get("id")
-        except Exception as e:
-            print(f"Warning: thumbnail upload failed: {e}")
-    # Generate content
-    description = item.get("description", "") or "(説明文なし)"
-    summary = textwrap.shorten(description, width=200, placeholder="…")
-    content = f"<p>{summary}</p>\n"
-    if thumb_id:
-        content += f"<p><img src=\"{item['thumb']}\" alt=\"{item['title']}\"></p>\n"
-    content += f"<p><a href=\"{item['detail_url']}\" target=\"_blank\">▶ 詳細・購入はこちら</a></p>\n"
-    # Publish
+    try:
+        img_data = requests.get(url, timeout=10).content
+    except Exception as e:
+        print(f"DEBUG: Failed to download image {url}: {e}")
+        return None
+    name = os.path.basename(urlparse(url).path)
+    media_data = {
+        "name": name,
+        "type": "image/jpeg",
+        "bits": xmlrpc_client.Binary(img_data),
+    }
+    res = wp.call(media.UploadFile(media_data))
+    return res.get("id")
+
+
+def create_wp_post(video: dict) -> bool:
+    """
+    Create a WordPress post for a single video. Returns True if posted.
+    """
+    wp = Client(WP_URL, WP_USER, WP_PASS)
+    title = video.get("title", "")
+    # Check for duplicates
+    existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
+    if any(p.title == title for p in existing):
+        print(f"→ Skipping duplicate: {title}")
+        return False
+
+    # Fetch sample images
+    images = fetch_sample_images(video.get("cid", ""))
+    if not images:
+        print(f"→ No samples for: {title}, skipping.")
+        return False
+
+    # Upload featured image
+    thumb_id = upload_image(wp, images[0])
+
+    # Build post content
+    aff_url = make_affiliate_link(video.get("detail_url", ""))
+    parts = []
+    parts.append(f'<p><a href="{aff_url}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
+    parts.append(f'<p><a href="{aff_url}" target="_blank">{title}</a></p>')
+    if video.get("description"):
+        parts.append(f'<div>{video.get("description")}</div>')
+    for img in images[1:]:
+        parts.append(f'<p><img src="{img}" alt="{title}"></p>')
+    parts.append(f'<p><a href="{aff_url}" target="_blank">{title}</a></p>')
+
     post = WordPressPost()
-    post.title = item["title"]
-    post.content = content
-    if thumb_id:
-        post.thumbnail = thumb_id
+    post.title = title
+    post.content = "\n".join(parts)
+    post.thumbnail = thumb_id
     post.terms_names = {"category": ["DMM動画"], "post_tag": []}
     post.post_status = "publish"
     wp.call(posts.NewPost(post))
-    print(f"✔ Posted: {item['title']}")
+    print(f"✔ Posted: {title}")
+    return True
+
 
 def main():
-    load_dotenv()
-    genre_id = os.getenv("GENRE_ID", "8503")
-    video = fetch_latest_video(genre_id)
-    if not video:
-        print("No new video found.")
-        return
-    post_to_wp(video)
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
+    videos = fetch_latest_videos()
+    for video in videos:
+        if create_wp_post(video):
+            break
+    else:
+        print("No new videos to post.")
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
+
 
 if __name__ == "__main__":
     main()
