@@ -17,7 +17,7 @@ for module_name, pkg in required_packages:
     except ImportError:
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg])
 
-# Now safe to import installed packages
+# Now safe to import all dependencies
 import os
 import time
 import requests
@@ -84,7 +84,6 @@ def fetch_latest_videos() -> list[dict]:
         return []
 
     soup = BeautifulSoup(resp.text, 'html.parser')
-    # Bypass adult check
     agree = soup.find('a', href=lambda h: h and 'adult' in h) or soup.find('a', string=lambda t: t and 'Agree' in t)
     if agree and agree.get('href'):
         agree_url = agree['href']
@@ -104,13 +103,13 @@ def fetch_latest_videos() -> list[dict]:
         if not a or not a.get('href'):
             continue
         href = a['href']
-        detail = href if href.startswith('http') else f"https://video.dmm.co.jp{href}"
+        detail_url = href if href.startswith('http') else f"https://video.dmm.co.jp{href}"
         img = a.find('img')
-        title = img.get('alt','').strip() or li.find('p', class_='title').get_text(strip=True)
-        cid = detail.rstrip('/').split('/')[-1]
-        videos.append({'title': title, 'detail_url': detail, 'cid': cid})
+        title = img.get('alt','').strip() or (li.find('p', class_='title').get_text(strip=True) if li.find('p', class_='title') else '')
+        cid = detail_url.rstrip('/').split('/')[-1]
+        videos.append({'title': title, 'detail_url': detail_url, 'cid': cid})
 
-    print(f"DEBUG: {len(videos)} videos found")
+    print(f"DEBUG: Found {len(videos)} videos")
     return videos
 
 # Fetch sample images via API
@@ -145,7 +144,7 @@ def create_wp_post(video: dict) -> bool:
     wp = Client(WP_URL, WP_USER, WP_PASS)
     title = video['title']
     existing = wp.call(GetPosts({'post_status':'publish','s':title}))
-    if any(p.title==title for p in existing):
+    if any(p.title == title for p in existing):
         print(f"→ Skip duplicate: {title}")
         return False
     imgs = fetch_sample_images(video['cid'])
@@ -154,20 +153,22 @@ def create_wp_post(video: dict) -> bool:
         return False
     thumb = upload_image(wp, imgs[0])
     aff = make_affiliate_link(video['detail_url'])
-    parts=[f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}'/></a></p>",f"<p><a href='{aff}' target='_blank'>{title}</a></p>"]
-    parts+= [f"<p><img src='{i}'/></p>" for i in imgs[1:]] + [f"<p><a href='{aff}'>{title}</a></p>"]
-    post=WordPressPost();post.title=title;post.content="\n".join(parts);post.thumbnail=thumb;post.terms_names={'category':['DMM動画'],'post_tag':[]};post.post_status='publish'
-    wp.call(posts.NewPost(post));print(f"✔ {title}")
+    parts = [f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}'/></a></p>", f"<p><a href='{aff}' target='_blank'>{title}</a></p>"]
+    parts += [f"<p><img src='{i}'/></p>" for i in imgs[1:]] + [f"<p><a href='{aff}'>{title}</a></p>"]
+    post = WordPressPost(); post.title = title; post.content = "\n".join(parts); post.thumbnail = thumb; post.terms_names = {'category':['DMM動画'],'post_tag':[]}; post.post_status = 'publish'
+    wp.call(posts.NewPost(post)); print(f"✔ Posted: {title}")
     return True
 
 # Main execution
 def main():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Start")
-    vids=fetch_latest_videos()
-    for v in vids:
-        if create_wp_post(v): break
+    videos = fetch_latest_videos()
+    for v in videos:
+        if create_wp_post(v):
+            break
     else:
         print("No new posts.")
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] End")
 
-if __name__=='__main__':main()
+if __name__ == '__main__':
+    main()
