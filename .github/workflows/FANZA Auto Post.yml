@@ -1,24 +1,33 @@
+name: FANZA Auto Post
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */4 * * *'   # 4時間おき
+
 jobs:
-  build:
+  auto_post:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
-          python-version: 3.11
+          python-version: '3.11'
 
       - name: Uninstall old python-wordpress-xmlrpc
         run: pip uninstall -y python-wordpress-xmlrpc
 
-      - name: Install requirements
+      - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Show python-wordpress-xmlrpc version
         run: pip show python-wordpress-xmlrpc
 
-      - name: Run script
+      - name: Run FANZA auto post script
         env:
           WP_URL: ${{ secrets.WP_URL }}
           WP_USER: ${{ secrets.WP_USER }}
