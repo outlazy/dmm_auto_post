@@ -2,8 +2,8 @@ name: FANZA Auto Post
 
 on:
   schedule:
-    - cron: '0 */4 * * *'   # 4時間ごと実行
-  workflow_dispatch:         # 手動実行も可
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
 
 jobs:
   autopost:
@@ -21,7 +21,7 @@ jobs:
       - name: 依存パッケージインストール
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt || pip install requests beautifulsoup4 wordpress-xmlrpc pyyaml
+          pip install -r requirements.txt || pip install requests beautifulsoup4 python-wordpress-xmlrpc pyyaml
 
       - name: 自動投稿スクリプト実行
         env:
