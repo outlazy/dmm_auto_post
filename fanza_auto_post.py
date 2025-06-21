@@ -31,9 +31,9 @@ def fetch_amateur_videos():
     params = {
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
-        "site": "video",
+        "site": "FANZA",
         "service": "digital",
-        "floor": "videoa",   # ←ここをvideoaに変更（アダルト動画プロ系）
+        "floor": "videoc",    # ← ここが素人動画！
         "sort": "date",
         "output": "json",
         "hits": 10,
@@ -49,6 +49,7 @@ def fetch_amateur_videos():
 
     items = resp.json().get("result", {}).get("items", [])
     return items
+
 
 def is_released(item):
     # APIレスポンスに「date」(発売日)フィールドが含まれている前提
