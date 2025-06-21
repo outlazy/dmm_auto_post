@@ -5,7 +5,7 @@
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
 ・全ての時間処理・判定・ログ出力を日本時間（JST）で統一
 ・APIのサンプル画像取得ロジックを最新版構造（sampleImageURL/sample_l,image）に完全対応
-・タグ（女優・レーベル・ジャンル）・説明文（複数フィールド対応）も自動付与
+・タグ（女優・レーベル・ジャンル）・説明文も「iteminfo」配下から確実に取得
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
 
@@ -123,26 +123,27 @@ def create_wp_post(item):
 
     thumb_id = upload_image(wp, images[0]) if images else None
 
-    # タグ（レーベル・メーカー・女優・ジャンル）
+    # タグ（レーベル・メーカー・女優・ジャンル）はiteminfo配下から抽出
     tags = set()
+    ii = item.get("iteminfo", {})
     # レーベル
-    if "label" in item and item["label"]:
-        for l in item["label"]:
+    if "label" in ii and ii["label"]:
+        for l in ii["label"]:
             if "name" in l:
                 tags.add(l["name"])
     # メーカー
-    if "maker" in item and item["maker"]:
-        for m in item["maker"]:
+    if "maker" in ii and ii["maker"]:
+        for m in ii["maker"]:
             if "name" in m:
                 tags.add(m["name"])
     # 女優
-    if "actress" in item and item["actress"]:
-        for a in item["actress"]:
+    if "actress" in ii and ii["actress"]:
+        for a in ii["actress"]:
             if "name" in a:
                 tags.add(a["name"])
     # ジャンル
-    if "genre" in item and item["genre"]:
-        for g in item["genre"]:
+    if "genre" in ii and ii["genre"]:
+        for g in ii["genre"]:
             if "name" in g:
                 tags.add(g["name"])
 
@@ -151,10 +152,11 @@ def create_wp_post(item):
     # 本文説明文の取得（description→iteminfo["comment"]→iteminfo["story"]）
     desc = item.get("description", "")
     if not desc and "iteminfo" in item:
-        if "comment" in item["iteminfo"]:
-            desc = item["iteminfo"]["comment"]
-        elif "story" in item["iteminfo"]:
-            desc = item["iteminfo"]["story"]
+        ii = item["iteminfo"]
+        if "comment" in ii:
+            desc = ii["comment"]
+        elif "story" in ii:
+            desc = ii["story"]
 
     parts = []
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
