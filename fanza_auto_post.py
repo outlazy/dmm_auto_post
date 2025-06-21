@@ -28,17 +28,16 @@ def get_env(key, required=True, default=None):
 def fetch_amateur_videos():
     API_ID = get_env("DMM_API_ID")
     AFF_ID = get_env("DMM_AFFILIATE_ID")
-params = {
-    "api_id": API_ID,
-    "affiliate_id": AFF_ID,
-    "site": "video",
-    "service": "digital",
-    "floor": "videoa",   # ←ここをvideoaに変更（アダルト動画プロ系）
-    "sort": "date",
-    "output": "json",
-    "hits": 10,
-}
-
+    params = {
+        "api_id": API_ID,
+        "affiliate_id": AFF_ID,
+        "site": "video",
+        "service": "digital",
+        "floor": "videoa",   # ←ここをvideoaに変更（アダルト動画プロ系）
+        "sort": "date",
+        "output": "json",
+        "hits": 10,
+    }
     resp = requests.get(DMM_API_URL, params=params, timeout=10)
     try:
         resp.raise_for_status()
@@ -50,7 +49,6 @@ params = {
 
     items = resp.json().get("result", {}).get("items", [])
     return items
-
 
 def is_released(item):
     # APIレスポンスに「date」(発売日)フィールドが含まれている前提
