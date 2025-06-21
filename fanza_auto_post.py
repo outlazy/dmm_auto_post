@@ -3,20 +3,23 @@
 
 """
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
+・全ての時間処理・判定・ログ出力を日本時間（JST）で統一
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
-・取得作品、発売日、URLなどprint出力つき
 """
 
 import os
 import requests
-import time
 from datetime import datetime
+import pytz
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
 DMM_API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
+
+def now_jst():
+    return datetime.now(pytz.timezone('Asia/Tokyo'))
 
 def get_env(key, required=True, default=None):
     val = os.environ.get(key, default)
@@ -57,15 +60,11 @@ def is_released(item):
     if not date_str:
         return False
     try:
-        # 発売日が "YYYY-MM-DD HH:MM:SS" 形式なら時刻まで考慮
-        release_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-        now = datetime.now()
-        # 発売日 <= 現在（"今より前ならOK"判定）
-        return release_date <= now
+        jst = pytz.timezone('Asia/Tokyo')
+        release_date = jst.localize(datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S"))
+        return release_date <= now_jst()
     except Exception:
-        # フォーマット不一致時はとりあえず通す
         return True
-
 
 def make_affiliate_link(url, aff_id):
     from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
@@ -156,7 +155,7 @@ def create_wp_post(item):
     return True
 
 def main():
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 投稿開始")
+    print(f"[{now_jst().strftime('%Y-%m-%d %H:%M:%S')}] 投稿開始")
     try:
         items = fetch_amateur_videos()
         posted = False
@@ -171,7 +170,7 @@ def main():
             print("新規投稿なし")
     except Exception as e:
         print(f"エラー: {e}")
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 投稿終了")
+    print(f"[{now_jst().strftime('%Y-%m-%d %H:%M:%S')}] 投稿終了")
 
 if __name__ == "__main__":
     main()
