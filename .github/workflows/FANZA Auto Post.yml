@@ -33,6 +33,9 @@ jobs:
       - name: Show python-wordpress-xmlrpc version
         run: pip show python-wordpress-xmlrpc
 
+      - name: Check Python version
+        run: python --version
+
       - name: Run FANZA auto post script
         env:
           WP_URL: ${{ secrets.WP_URL }}
