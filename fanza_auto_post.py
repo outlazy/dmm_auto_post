@@ -5,6 +5,7 @@
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
 ・全ての時間処理・判定・ログ出力を日本時間（JST）で統一
 ・APIのサンプル画像取得ロジックを最新版構造（sampleImageURL/sample_l,image）に完全対応
+・タグ（女優・レーベル・ジャンル）・説明文（複数フィールド対応）も自動付与
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
 
@@ -122,22 +123,42 @@ def create_wp_post(item):
 
     thumb_id = upload_image(wp, images[0]) if images else None
 
-    # 女優・レーベル・ジャンル
+    # タグ（レーベル・メーカー・女優・ジャンル）
     tags = set()
+    # レーベル
+    if "label" in item and item["label"]:
+        for l in item["label"]:
+            if "name" in l:
+                tags.add(l["name"])
+    # メーカー
     if "maker" in item and item["maker"]:
-        tags.add(item["maker"])
+        for m in item["maker"]:
+            if "name" in m:
+                tags.add(m["name"])
+    # 女優
     if "actress" in item and item["actress"]:
         for a in item["actress"]:
-            tags.add(a["name"])
+            if "name" in a:
+                tags.add(a["name"])
+    # ジャンル
     if "genre" in item and item["genre"]:
         for g in item["genre"]:
-            tags.add(g["name"])
+            if "name" in g:
+                tags.add(g["name"])
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
+
+    # 本文説明文の取得（description→iteminfo["comment"]→iteminfo["story"]）
+    desc = item.get("description", "")
+    if not desc and "iteminfo" in item:
+        if "comment" in item["iteminfo"]:
+            desc = item["iteminfo"]["comment"]
+        elif "story" in item["iteminfo"]:
+            desc = item["iteminfo"]["story"]
+
     parts = []
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    desc = item.get("description", "")
     if desc:
         parts.append(f'<div>{desc}</div>')
     for img in images[1:]:
