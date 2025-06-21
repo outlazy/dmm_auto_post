@@ -1,4 +1,4 @@
 requests
 beautifulsoup4
-python-wordpress-xmlrpc
+python-wordpress-xmlrpc>=2.3
 pytz
