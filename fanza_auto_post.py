@@ -5,7 +5,9 @@
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
 ・全ての時間処理・判定・ログ出力を日本時間（JST）で統一
 ・APIのサンプル画像取得ロジックを最新版構造（sampleImageURL/sample_l,image）に完全対応
-・タグ（女優・レーベル・ジャンル）・本文はiteminfo配下から確実に取得、なければ商品ページからdescriptionをクロール＆最終自動生成
+・タグ（女優・レーベル・ジャンル）もiteminfo配下から確実に取得
+・「ジャンルに熟女」がある場合は必ずスキップ
+・本文は商品詳細ページのJSON-LDスクリプトタグ全文を最優先で投稿
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
 
@@ -76,6 +78,12 @@ def is_released(item):
     except Exception:
         return True
 
+def contains_jukujo(item):
+    # iteminfo->genreから"熟女"を判定
+    ii = item.get("iteminfo", {})
+    genres = [g.get("name", "") for g in ii.get("genre", []) if "name" in g]
+    return "熟女" in genres
+
 def make_affiliate_link(url, aff_id):
     from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
     parsed = urlparse(url)
@@ -95,22 +103,17 @@ def upload_image(wp, url):
         print(f"画像アップロード失敗: {url} ({e})")
         return None
 
-def fetch_description_from_detail_page(url):
+def fetch_jsonld_script_from_detail_page(url):
     """
-    商品ページからJSON-LD（Product構造化データ）descriptionを抽出
+    商品ページからJSON-LD（Product構造化データ）スクリプト全文を抽出
     """
     try:
         r = requests.get(url, timeout=10)
-        m = re.search(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', r.text, re.DOTALL)
+        m = re.search(r'(<script[^>]*type="application/ld\+json"[^>]*>.*?</script>)', r.text, re.DOTALL)
         if m:
-            jd = json.loads(m.group(1))
-            desc = jd.get("description", "")
-            # descriptionが空ならsubjectOf > descriptionも探す
-            if not desc and "subjectOf" in jd and isinstance(jd["subjectOf"], dict):
-                desc = jd["subjectOf"].get("description", "")
-            return desc.strip()
+            return m.group(1).strip()
     except Exception as e:
-        print(f"商品ページ説明抽出失敗: {e}")
+        print(f"商品ページJSON-LD script抽出失敗: {e}")
     return ""
 
 def create_wp_post(item):
@@ -169,12 +172,11 @@ def create_wp_post(item):
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
-    # 本文説明文（優先順位: 商品ページ > description > iteminfo > 自動生成）
-    desc = fetch_description_from_detail_page(item["URL"])
+    # 本文：商品ページのJSON-LDスクリプト全文を最優先
+    desc = fetch_jsonld_script_from_detail_page(item["URL"])
     if not desc and "description" in item and item["description"]:
         desc = item["description"]
     elif not desc:
-        # iteminfo
         if "comment" in ii and ii["comment"]:
             desc = ii["comment"]
         elif "story" in ii and ii["story"]:
@@ -190,7 +192,7 @@ def create_wp_post(item):
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     if desc:
-        parts.append(f'<div>{desc}</div>')
+        parts.append(desc)  # ←スクリプトタグそのまま貼り付け
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
@@ -215,6 +217,9 @@ def main():
         for item in items:
             if not is_released(item):
                 print(f"→ 未発売: {item.get('title')}")
+                continue
+            if contains_jukujo(item):
+                print(f"→ 熟女ジャンル: {item.get('title')}（スキップ）")
                 continue
             if create_wp_post(item):
                 posted = True
