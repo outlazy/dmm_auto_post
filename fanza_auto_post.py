@@ -54,7 +54,7 @@ def fetch_amateur_videos():
         "floor": "videoc",    # 素人動画
         "sort": "date",
         "output": "json",
-        "hits": 10,
+        "hits": 20,
     }
     resp = requests.get(DMM_API_URL, params=params, timeout=10)
     try:
