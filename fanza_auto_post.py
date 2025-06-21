@@ -6,7 +6,7 @@ FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動
 ・日本時間（JST）で動作
 ・APIサンプル画像/タグもiteminfo配下から自動抽出
 ・ジャンルに「熟女」が含まれる場合は必ずスキップ
-・商品ページから<meta name="description"...>タグ・<script type="application/ld+json">...</script>タグを両方本文に貼り付け
+・商品ページからdescription（metaまたはJSON-LD）だけ抽出し、本文に説明文のみを記載
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
 
@@ -102,27 +102,34 @@ def upload_image(wp, url):
         print(f"画像アップロード失敗: {url} ({e})")
         return None
 
-def fetch_script_and_meta_from_detail_page(url):
+def fetch_description_from_detail_page(url):
     """
-    商品ページからJSON-LDスクリプトタグとdescriptionメタタグを両方抽出
+    商品ページからdescription（metaタグまたはJSON-LD内）だけ抽出
     """
     try:
         r = requests.get(url, timeout=10)
         html = r.text
-        # script
-        script = ""
-        m_script = re.search(r'(<script[^>]*type="application/ld\+json"[^>]*>.*?</script>)', html, re.DOTALL)
+
+        # 1. metaタグ
+        m = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+
+        # 2. JSON-LD内の"description"
+        m_script = re.search(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)
         if m_script:
-            script = m_script.group(1).strip()
-        # meta
-        meta = ""
-        m_meta = re.search(r'(<meta[^>]*name="description"[^>]*>)', html, re.IGNORECASE)
-        if m_meta:
-            meta = m_meta.group(1).strip()
-        return script, meta
+            try:
+                jd = json.loads(m_script.group(1))
+                desc = jd.get("description", "")
+                if not desc and "subjectOf" in jd and isinstance(jd["subjectOf"], dict):
+                    desc = jd["subjectOf"].get("description", "")
+                if desc:
+                    return desc.strip()
+            except Exception:
+                pass
     except Exception as e:
-        print(f"商品ページタグ抽出失敗: {e}")
-        return "", ""
+        print(f"商品ページ説明抽出失敗: {e}")
+    return ""
 
 def create_wp_post(item):
     WP_URL = get_env('WP_URL')
@@ -180,34 +187,27 @@ def create_wp_post(item):
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
-    # 本文：metaタグ・scriptタグを両方
-    script_tag, meta_tag = fetch_script_and_meta_from_detail_page(item["URL"])
-
-    # fallback: 何も取得できなかったら自動生成（念のため）
-    desc = ""
-    if not script_tag and not meta_tag:
-        if "description" in item and item["description"]:
-            desc = item["description"]
-        elif "comment" in ii and ii["comment"]:
+    # 本文：説明文のみ
+    desc = fetch_description_from_detail_page(item["URL"])
+    if not desc and "description" in item and item["description"]:
+        desc = item["description"]
+    elif not desc:
+        if "comment" in ii and ii["comment"]:
             desc = ii["comment"]
         elif "story" in ii and ii["story"]:
             desc = ii["story"]
-        if not desc:
-            cast = "、".join([a["name"] for a in ii.get("actress", []) if "name" in a])
-            label = "、".join([l["name"] for l in ii.get("label", []) if "name" in l])
-            genres = "、".join([g["name"] for g in ii.get("genre", []) if "name" in g])
-            volume = item.get("volume", "")
-            desc = f"{title}。ジャンル：{genres}。出演：{cast}。レーベル：{label}。収録時間：{volume}。" if genres or cast or label or volume else "FANZA（DMM）素人動画の自動投稿です。"
+    if not desc:
+        cast = "、".join([a["name"] for a in ii.get("actress", []) if "name" in a])
+        label = "、".join([l["name"] for l in ii.get("label", []) if "name" in l])
+        genres = "、".join([g["name"] for g in ii.get("genre", []) if "name" in g])
+        volume = item.get("volume", "")
+        desc = f"{title}。ジャンル：{genres}。出演：{cast}。レーベル：{label}。収録時間：{volume}。" if genres or cast or label or volume else "FANZA（DMM）素人動画の自動投稿です。"
 
     parts = []
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    if meta_tag:
-        parts.append(meta_tag)
-    if script_tag:
-        parts.append(script_tag)
-    if desc and not script_tag and not meta_tag:
-        parts.append(desc)
+    if desc:
+        parts.append(f'<div>{desc}</div>')
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
