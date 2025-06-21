@@ -1,183 +1,244 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import sys
-import subprocess
+"""
+FANZA（DMM）素人動画 人気順1位を4時間ごとにWordPress自動投稿
+- アフィリエイトリンク生成
+- レーベル/女優名/ジャンルをタグ化
+- サンプル画像1枚目はアイキャッチ
+- 説明は要約優先、不足時はコピペ
+"""
+
 import os
-import time
-
-# --- Bootstrap dependencies: install missing packages before any imports ---
-required_packages = [
-    ('dotenv', 'python-dotenv>=0.21.0'),
-    ('requests', 'requests>=2.31.0'),
-    ('bs4', 'beautifulsoup4>=4.12.2'),
-    ('wordpress_xmlrpc', 'python-wordpress-xmlrpc>=2.3')
-]
-for module_name, pkg_spec in required_packages:
-    try:
-        __import__(module_name)
-    except ImportError:
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', pkg_spec])
-
-# Now safe to import third-party libraries
 import requests
-from dotenv import load_dotenv
-from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode, urljoin
+import time
+import collections
+import collections.abc
+collections.Iterable = collections.abc.Iterable
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
-import collections.abc
+from dotenv import load_dotenv
 
-# Compatibility patch for older wordpress_xmlrpc
-collections.Iterable = collections.abc.Iterable
+# 要約用 OpenAI API（任意：環境変数 OPENAI_API_KEY をセット）
+try:
+    import openai
+    USE_OPENAI = True
+except ImportError:
+    USE_OPENAI = False
 
-# Load environment configuration
+# -- 環境変数ロード --
 def load_env():
     load_dotenv()
     env = {
-        'WP_URL': os.getenv('WP_URL'),
-        'WP_USER': os.getenv('WP_USER'),
-        'WP_PASS': os.getenv('WP_PASS'),
-        'DMM_AFFILIATE_ID': os.getenv('DMM_AFFILIATE_ID'),
-        'DMM_API_ID': os.getenv('DMM_API_ID')
+        "WP_URL":     os.getenv("WP_URL"),
+        "WP_USER":    os.getenv("WP_USER"),
+        "WP_PASS":    os.getenv("WP_PASS"),
+        "AFF_ID":     os.getenv("DMM_AFFILIATE_ID"),
+        "API_ID":     os.getenv("DMM_API_ID"),
+        "OPENAI_KEY": os.getenv("OPENAI_API_KEY")
     }
-    missing = [k for k, v in env.items() if not v]
-    if missing:
-        raise RuntimeError(f"Missing environment variables: {', '.join(missing)}")
+    for name, val in env.items():
+        if not val and name != "OPENAI_KEY":
+            raise RuntimeError(f"Missing environment variable: {name}")
     return env
 
 env = load_env()
-WP_URL = env['WP_URL']
-WP_USER = env['WP_USER']
-WP_PASS = env['WP_PASS']
-AFF_ID = env['DMM_AFFILIATE_ID']
-API_ID = env['DMM_API_ID']
+WP_URL, WP_USER, WP_PASS, AFF_ID, API_ID, OPENAI_KEY = env.values()
+if USE_OPENAI and OPENAI_KEY:
+    openai.api_key = OPENAI_KEY
 
-# Settings
-LIST_URL = 'https://video.dmm.co.jp/amateur/list/?sort=date'
-max_posts = 10
-
-# Helper: build affiliate URL
+# -- アフィリエイトリンク生成 --
 def make_affiliate_link(url: str) -> str:
     parsed = urlparse(url)
     qs = dict(parse_qsl(parsed.query))
-    qs['affiliate_id'] = AFF_ID
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(qs), parsed.fragment))
+    qs["affiliate_id"] = AFF_ID
+    new_query = urlencode(qs)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
-# Fetch latest videos by scraping list page with age-check bypass
-def fetch_latest_videos() -> list:
+# -- FANZA素人 人気順リストの1位商品ページ取得 --
+def fetch_top_video_url() -> str:
+    RANKING_URL = "https://video.dmm.co.jp/amateur/list/?sort=ranking"
     session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0'})
-    # Bypass age check
-    session.cookies.set('ckcy', '1', domain='.dmm.co.jp')
+    session.headers.update({"User-Agent": "Mozilla/5.0"})
+    session.cookies.set("ckcy", "1", domain=".dmm.co.jp")
+    resp = session.get(RANKING_URL, timeout=15)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    li = soup.select_one("li.list-box")
+    if not li:
+        raise RuntimeError("ランキングリストから商品が取得できません")
+    a = li.find("a", class_="tmb")
+    if not a or not a.get("href"):
+        raise RuntimeError("ランキング商品のリンクが取得できません")
+    href = a["href"]
+    detail_url = href if href.startswith("http") else f"https://video.dmm.co.jp{href}"
+    # 商品ページ（DMM本体）へリダイレクトするURL取得
+    detail_resp = session.get(detail_url, timeout=10, allow_redirects=True)
+    detail_resp.raise_for_status()
+    # DMM本体商品ページへリダイレクトされる場合が多い
+    return detail_resp.url
 
-    try:
-        resp = session.get(LIST_URL, timeout=10)
-        resp.raise_for_status()
-    except Exception as e:
-        print(f"DEBUG: List page load failed: {e}")
-        return []
-
-    soup = BeautifulSoup(resp.text, 'html.parser')
-    # If on age-check page, click 'I Agree'
-    agree = soup.find('a', string=lambda t: t and 'Agree' in t)
-    if agree and agree.get('href'):
+# -- 商品ページスクレイピングで情報抽出 --
+def parse_product_page(url: str) -> dict:
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0"})
+    session.cookies.set("ckcy", "1", domain=".dmm.co.jp")
+    resp = session.get(url, timeout=15)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    # 題名
+    title = soup.select_one("h1#title, h1.d-productTitle__title, h1")
+    title = title.get_text(strip=True) if title else "無題"
+    # 商品説明
+    desc = soup.select_one("div#mu__product-description, .d-productDescription__text, .box-product-detail .item-comment")
+    description = desc.get_text(strip=True) if desc else ""
+    # レーベル
+    label = ""
+    label_a = soup.find("a", href=lambda h: h and "/digital/videoc/-/label/=" in h)
+    if label_a:
+        label = label_a.get_text(strip=True)
+    # 女優名
+    actresses = []
+    for a in soup.find_all("a", href=lambda h: h and "/digital/videoc/-/list/=/article=actress/id=" in h):
+        name = a.get_text(strip=True)
+        if name and name not in actresses:
+            actresses.append(name)
+    # ジャンル
+    genres = []
+    for a in soup.find_all("a", href=lambda h: h and "/digital/videoc/-/list/=/article=keyword/id=" in h):
+        name = a.get_text(strip=True)
+        if name and name not in genres:
+            genres.append(name)
+    # サンプル画像
+    images = []
+    for img in soup.select("div#sample-video > img, .d-productSample__item img, .sample-image img, #sample-image-block img"):
+        src = img.get("src") or img.get("data-src")
+        if src and src.startswith("http"):
+            images.append(src)
+    if not images:
+        # 画像ブロックが違う場合
+        images = [img.get("src") for img in soup.find_all("img") if img.get("src") and "sample" in img.get("src")]
+    # 商品ID抽出（例：cid=xxxxxx）
+    cid = ""
+    parsed = urlparse(url)
+    q = dict(parse_qsl(parsed.query))
+    if "cid" in q:
+        cid = q["cid"]
+    else:
         try:
-            resp = session.get(urljoin(LIST_URL, agree['href']), timeout=10)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, 'html.parser')
-        except Exception as e:
-            print(f"DEBUG: Age bypass failed: {e}")
-            return []
-
-    vids = []
-    # Use anchor.tmb elements directly for list items
-    els = soup.select('a.tmb')[:max_posts]
-    for a in els:
-        href = a.get('href')
-        detail = href if href.startswith('http') else urljoin(LIST_URL, href)
-        img = a.find('img')
-        title = img.get('alt', '').strip() if img and img.get('alt') else ''
-        cid = detail.rstrip('/').split('cid=')[-1]
-        vids.append({'title': title, 'detail_url': detail, 'cid': cid})
-    print(f"DEBUG: Scraped {len(vids)} videos from list page")
-    return vids
-
-# Fetch sample images via ItemDetail API
-def fetch_sample_images(cid: str) -> list:
-    params = {
-        'api_id': API_ID,
-        'affiliate_id': AFF_ID,
-        'site': 'video',
-        'service': 'amateur',
-        'item': cid,
-        'output': 'json'
+            for p in parsed.path.split("/"):
+                if p.startswith("cid="):
+                    cid = p.replace("cid=", "")
+        except Exception:
+            pass
+    return {
+        "title": title,
+        "description": description,
+        "label": label,
+        "actresses": actresses,
+        "genres": genres,
+        "images": images,
+        "detail_url": url,
+        "cid": cid
     }
-    try:
-        r = requests.get('https://api.dmm.com/affiliate/v3/ItemDetail', params=params, timeout=10)
-        r.raise_for_status()
-    except Exception as e:
-        print(f"DEBUG: ItemDetail API failed for {cid}: {e}")
-        return []
-    data = r.json().get('result', {}).get('items', [])
-    if not data:
-        return []
-    imgs = data[0].get('sampleImageURL', {}).get('large', [])
-    return [imgs] if isinstance(imgs, str) else imgs
 
-# Upload image to WordPress
+# -- 商品説明の要約（OpenAI利用、失敗時は原文返す） --
+def summarize(text: str) -> str:
+    if not text or len(text) < 50:
+        return text
+    if USE_OPENAI and OPENAI_KEY:
+        try:
+            prompt = f"次の商品の説明文を200文字以内で要約してください:\n{text}"
+            resp = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}],
+                max_tokens=150, temperature=0.7)
+            result = resp["choices"][0]["message"]["content"].strip()
+            return result
+        except Exception as e:
+            print(f"要約失敗: {e}（原文を使用）")
+            return text
+    else:
+        # 簡易要約（100-200字カット）
+        if len(text) > 200:
+            return text[:200] + "..."
+        return text
+
+# -- 画像をWordPressにアップロード（戻り値:画像ID） --
 def upload_image(wp: Client, url: str) -> int:
     try:
-        content = requests.get(url, timeout=10).content
+        data = requests.get(url, timeout=10).content
+        name = os.path.basename(urlparse(url).path)
+        media_data = {"name": name, "type": "image/jpeg", "bits": xmlrpc_client.Binary(data)}
+        res = wp.call(media.UploadFile(media_data))
+        return res.get("id")
     except Exception as e:
-        print(f"DEBUG: Download failed: {e}")
+        print(f"画像アップロード失敗: {url} ({e})")
         return None
-    name = os.path.basename(urlparse(url).path)
-    media_data = {'name': name, 'type': 'image/jpeg', 'bits': xmlrpc_client.Binary(content)}
-    res = wp.call(media.UploadFile(media_data))
-    return res.get('id')
 
-# Create WordPress post
-def create_wp_post(video: dict) -> bool:
+# -- WordPress投稿（指定構成で） --
+def create_wp_post(product: dict) -> bool:
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    existing = wp.call(GetPosts({'post_status': 'publish', 's': video['title']}))
-    if any(p.title == video['title'] for p in existing):
-        print(f"→ Skip duplicate: {video['title']}")
+    title = product["title"]
+    # 投稿済みか確認
+    existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
+    if any(p.title == title for p in existing):
+        print(f"→ 既投稿: {title}（スキップ）")
         return False
-    imgs = fetch_sample_images(video['cid'])
-    if not imgs:
-        print(f"→ No images for: {video['title']}")
+    # 画像チェック
+    if not product["images"]:
+        print(f"→ サンプル画像なし: {title}（スキップ）")
         return False
-    thumb_id = upload_image(wp, imgs[0])
-    aff = make_affiliate_link(video['detail_url'])
-    parts = [
-        f"<p><a href='{aff}' target='_blank'><img src='{imgs[0]}' alt='{video['title']}'/></a></p>",
-        f"<p><a href='{aff}' target='_blank'>{video['title']}</a></p>"
-    ]
-    for img in imgs[1:]:
-        parts.append(f"<p><img src='{img}' alt='{video['title']}'/></p>")
-    parts.append(f"<p><a href='{aff}' target='_blank'>{video['title']}</a></p>")
+    # アイキャッチ
+    thumb_id = upload_image(wp, product["images"][0])
+    # 本文構築
+    aff_link = make_affiliate_link(product["detail_url"])
+    parts = []
+    # 1. アフィリンク画像
+    parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{product["images"][0]}" alt="{title}"></a></p>')
+    # 2. アフィリンク商品名
+    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
+    # 3. 商品説明（要約優先）
+    summary = summarize(product["description"])
+    if summary:
+        parts.append(f'<div>{summary}</div>')
+    # 4. サンプル画像（2枚目以降、リンクなし）
+    for img in product["images"][1:]:
+        parts.append(f'<p><img src="{img}" alt="{title}"></p>')
+    # 5. 最後にアフィリンク画像＆商品名
+    parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{product["images"][0]}" alt="{title}"></a></p>')
+    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
+    # タグ
+    tags = set()
+    if product["label"]: tags.add(product["label"])
+    tags.update(product["actresses"])
+    tags.update(product["genres"])
+    # 投稿
     post = WordPressPost()
-    post.title = video['title']
+    post.title = title
     post.content = "\n".join(parts)
     post.thumbnail = thumb_id
-    post.terms_names = {'category': ['DMM動画'], 'post_tag': []}
-    post.post_status = 'publish'
+    post.terms_names = {"category": ["DMM人気動画"], "post_tag": list(tags)}
+    post.post_status = "publish"
     wp.call(posts.NewPost(post))
-    print(f"✔ Posted: {video['title']}")
+    print(f"✔ 投稿完了: {title}")
     return True
 
-# Main execution
+# -- メイン実行（4時間ごとにcron推奨） --
 def main():
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job start")
-    for video in fetch_latest_videos():
-        if create_wp_post(video):
-            break
-    else:
-        print("No new videos to post.")
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Job finished")
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 投稿開始")
+    try:
+        product_url = fetch_top_video_url()
+        product = parse_product_page(product_url)
+        result = create_wp_post(product)
+        if not result:
+            print("新規投稿なし")
+    except Exception as e:
+        print(f"エラー: {e}")
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 投稿終了")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
