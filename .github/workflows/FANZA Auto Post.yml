@@ -3,7 +3,7 @@ name: FANZA Auto Post
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */4 * * *'   # 4時間おき
+    - cron: '0 */4 * * *'
 
 jobs:
   auto_post:
@@ -18,8 +18,14 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
       - name: Uninstall old python-wordpress-xmlrpc
         run: pip uninstall -y python-wordpress-xmlrpc
+
+      - name: Remove pip cache
+        run: pip cache purge
 
       - name: Install dependencies
         run: pip install -r requirements.txt
