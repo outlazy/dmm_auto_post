@@ -5,6 +5,7 @@
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
 ・全ての時間処理・判定・ログ出力を日本時間（JST）で統一
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
+・sampleImageURLのprint出力デバッグ付き
 """
 
 import os
@@ -52,14 +53,10 @@ def fetch_amateur_videos():
     items = resp.json().get("result", {}).get("items", [])
     print(f"API取得件数: {len(items)}")
     for item in items:
-        for item in items:
-    print("==== APIアイテム全体 ====")
-    print(item)  # ここでitem全体を出力
-    print("==== sampleImageURLのみ ====")
-    print(item.get('sampleImageURL'))
-    # ...（元の処理続く）
-
-        print("タイトル:", item.get('title'), "発売日:", item.get('date'), "URL:", item.get('URL'))
+        print("==== APIアイテム全体 ====")
+        print(item)
+        print("==== sampleImageURLのみ ====")
+        print(item.get('sampleImageURL'))
     return items
 
 def is_released(item):
