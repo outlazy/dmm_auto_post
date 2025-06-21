@@ -2,10 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-DMMアフィリエイトAPIで「発売済みFANZA素人動画」を自動取得→WordPress自動投稿
-- 設定は全て環境変数（Secrets）で管理
-- config.yml等は不要
-- 投稿済みチェック・発売済み日付判定付き
+FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
+・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
+・取得作品、発売日、URLなどprint出力つき
 """
 
 import os
@@ -33,7 +32,7 @@ def fetch_amateur_videos():
         "affiliate_id": AFF_ID,
         "site": "FANZA",
         "service": "digital",
-        "floor": "videoc",    # ← ここが素人動画！
+        "floor": "videoc",    # 素人動画
         "sort": "date",
         "output": "json",
         "hits": 10,
@@ -48,12 +47,12 @@ def fetch_amateur_videos():
         raise
 
     items = resp.json().get("result", {}).get("items", [])
+    print(f"API取得件数: {len(items)}")
+    for item in items:
+        print("タイトル:", item.get('title'), "発売日:", item.get('date'), "URL:", item.get('URL'))
     return items
 
-
 def is_released(item):
-    # APIレスポンスに「date」(発売日)フィールドが含まれている前提
-    # 例:  "date": "2024-06-19"
     date_str = item.get("date")
     if not date_str:
         return False
@@ -103,9 +102,7 @@ def create_wp_post(item):
     images = []
     if "sampleImageURL" in item:
         sample = item["sampleImageURL"]
-        # サンプル画像はリストor単独URL
         if isinstance(sample, dict):
-            # v3 APIだと "large" "small"のURL（1枚のみの場合もあり）
             if "large" in sample:
                 if isinstance(sample["large"], list):
                     images = sample["large"]
@@ -132,20 +129,14 @@ def create_wp_post(item):
             tags.add(g["name"])
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
-    # 本文構成
     parts = []
-    # 1枚目画像アフィリンク
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
-    # 商品名アフィリンク
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    # 商品説明
     desc = item.get("description", "")
     if desc:
         parts.append(f'<div>{desc}</div>')
-    # 残りサンプル画像
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    # 最後にアフィリンク画像＋商品名
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
 
@@ -167,6 +158,7 @@ def main():
         posted = False
         for item in items:
             if not is_released(item):
+                print(f"→ 未発売: {item.get('title')}")
                 continue
             if create_wp_post(item):
                 posted = True
