@@ -56,12 +56,16 @@ def is_released(item):
     date_str = item.get("date")
     if not date_str:
         return False
-    today = datetime.now().date()
     try:
-        release_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        return release_date <= today
+        # 発売日が "YYYY-MM-DD HH:MM:SS" 形式なら時刻まで考慮
+        release_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+        now = datetime.now()
+        # 発売日 <= 現在（"今より前ならOK"判定）
+        return release_date <= now
     except Exception:
-        return False
+        # フォーマット不一致時はとりあえず通す
+        return True
+
 
 def make_affiliate_link(url, aff_id):
     from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
