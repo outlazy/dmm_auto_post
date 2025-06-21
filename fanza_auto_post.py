@@ -6,7 +6,7 @@ FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動
 ・日本時間（JST）で動作
 ・APIサンプル画像/タグもiteminfo配下から自動抽出
 ・ジャンルに「熟女」が含まれる場合は必ずスキップ
-・商品ページからdescription（metaまたはJSON-LD）だけ抽出し、本文に説明文のみを記載
+・本文には「商品個別の説明文だけ」記載、DMMの注意書きや短文は自動除外
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
 
@@ -22,6 +22,17 @@ from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
 DMM_API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
+
+NG_DESCRIPTIONS = [
+    "From here on, it will be an adult site",
+    "18歳未満",
+    "アダルト商品を取り扱う",
+    "未成年",
+    "成人向け",
+    "アダルトサイト",
+    "ご利用は18歳以上",
+    "18才未満",
+]
 
 def now_jst():
     return datetime.now(pytz.timezone('Asia/Tokyo'))
@@ -102,9 +113,19 @@ def upload_image(wp, url):
         print(f"画像アップロード失敗: {url} ({e})")
         return None
 
-def fetch_description_from_detail_page(url):
+def is_valid_description(desc):
+    if not desc:
+        return False
+    if len(desc) < 30:
+        return False
+    for ng in NG_DESCRIPTIONS:
+        if ng in desc:
+            return False
+    return True
+
+def fetch_description_from_detail_page(url, item):
     """
-    商品ページからdescription（metaタグまたはJSON-LD内）だけ抽出
+    商品ページからdescription（metaタグまたはJSON-LD内）だけ抽出し、NG文の場合はAPIの説明にフォールバック
     """
     try:
         r = requests.get(url, timeout=10)
@@ -113,7 +134,9 @@ def fetch_description_from_detail_page(url):
         # 1. metaタグ
         m = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
         if m:
-            return m.group(1).strip()
+            desc = m.group(1).strip()
+            if is_valid_description(desc):
+                return desc
 
         # 2. JSON-LD内の"description"
         m_script = re.search(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)
@@ -123,13 +146,26 @@ def fetch_description_from_detail_page(url):
                 desc = jd.get("description", "")
                 if not desc and "subjectOf" in jd and isinstance(jd["subjectOf"], dict):
                     desc = jd["subjectOf"].get("description", "")
-                if desc:
+                if is_valid_description(desc):
                     return desc.strip()
             except Exception:
                 pass
     except Exception as e:
         print(f"商品ページ説明抽出失敗: {e}")
-    return ""
+
+    # 3. APIデータでフォールバック
+    ii = item.get("iteminfo", {})
+    for key in ("description", "comment", "story"):
+        val = item.get(key) or ii.get(key)
+        if is_valid_description(val):
+            return val
+    # 4. なければ自動生成
+    cast = "、".join([a["name"] for a in ii.get("actress", []) if "name" in a])
+    label = "、".join([l["name"] for l in ii.get("label", []) if "name" in l])
+    genres = "、".join([g["name"] for g in ii.get("genre", []) if "name" in g])
+    volume = item.get("volume", "")
+    base = f"{item['title']}。ジャンル：{genres}。出演：{cast}。レーベル：{label}。収録時間：{volume}。"
+    return base if len(base) > 10 else "FANZA（DMM）素人動画の自動投稿です。"
 
 def create_wp_post(item):
     WP_URL = get_env('WP_URL')
@@ -188,20 +224,9 @@ def create_wp_post(item):
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
     # 本文：説明文のみ
-    desc = fetch_description_from_detail_page(item["URL"])
-    if not desc and "description" in item and item["description"]:
-        desc = item["description"]
-    elif not desc:
-        if "comment" in ii and ii["comment"]:
-            desc = ii["comment"]
-        elif "story" in ii and ii["story"]:
-            desc = ii["story"]
+    desc = fetch_description_from_detail_page(item["URL"], item)
     if not desc:
-        cast = "、".join([a["name"] for a in ii.get("actress", []) if "name" in a])
-        label = "、".join([l["name"] for l in ii.get("label", []) if "name" in l])
-        genres = "、".join([g["name"] for g in ii.get("genre", []) if "name" in g])
-        volume = item.get("volume", "")
-        desc = f"{title}。ジャンル：{genres}。出演：{cast}。レーベル：{label}。収録時間：{volume}。" if genres or cast or label or volume else "FANZA（DMM）素人動画の自動投稿です。"
+        desc = "FANZA（DMM）素人動画の自動投稿です。"
 
     parts = []
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
