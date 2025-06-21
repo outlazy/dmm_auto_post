@@ -1,36 +1,29 @@
-name: FANZA Auto Post
-
-on:
-  schedule:
-    - cron: '0 */4 * * *'
-  workflow_dispatch:
-
 jobs:
-  autopost:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: チェックアウト
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Pythonセットアップ
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: 3.11
 
-      - name: 依存パッケージインストール
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt || pip install requests beautifulsoup4 python-wordpress-xmlrpc pyyaml
+      - name: Uninstall old python-wordpress-xmlrpc
+        run: pip uninstall -y python-wordpress-xmlrpc
 
-      - name: 自動投稿スクリプト実行
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      - name: Show python-wordpress-xmlrpc version
+        run: pip show python-wordpress-xmlrpc
+
+      - name: Run script
         env:
           WP_URL: ${{ secrets.WP_URL }}
           WP_USER: ${{ secrets.WP_USER }}
           WP_PASS: ${{ secrets.WP_PASS }}
-          DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
           DMM_API_ID: ${{ secrets.DMM_API_ID }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
           CATEGORY: ${{ secrets.CATEGORY }}
-        run: |
-          python fanza_auto_post.py
+        run: python fanza_auto_post.py
