@@ -1,34 +1,36 @@
-name: DMM 素人ジャンル自動投稿
+name: FANZA Auto Post
 
 on:
   schedule:
-    # UTCで21,1,5,9,13,17時に毎日実行（JSTの0/4/8/12/16/20時）
-    - cron: '0 21,1,5,9,13,17 * * *'
-  workflow_dispatch:  # 手動トリガーも可能
+    - cron: '0 */4 * * *'   # 4時間ごと実行
+  workflow_dispatch:         # 手動実行も可
 
 jobs:
-  post:
+  autopost:
     runs-on: ubuntu-latest
 
     steps:
-      - name: コードをチェックアウト
-        uses: actions/checkout@v3
+      - name: チェックアウト
+        uses: actions/checkout@v4
 
-      - name: Python セットアップ
-        uses: actions/setup-python@v4
+      - name: Pythonセットアップ
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      # 依存ライブラリはスクリプト内でセルフインストールするため、不要
-      # - name: 依存ライブラリをインストール
-      #   run: pip install -r requirements.txt
+      - name: 依存パッケージインストール
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || pip install requests beautifulsoup4 wordpress-xmlrpc pyyaml
 
       - name: 自動投稿スクリプト実行
         env:
-          WP_URL:           ${{ secrets.WP_URL }}
-          WP_USER:          ${{ secrets.WP_USER }}
-          WP_PASS:          ${{ secrets.WP_PASS }}
+          WP_URL: ${{ secrets.WP_URL }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_PASS: ${{ secrets.WP_PASS }}
           DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
-          DMM_API_ID:       ${{ secrets.DMM_API_ID }}
+          DMM_API_ID: ${{ secrets.DMM_API_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CATEGORY: ${{ secrets.CATEGORY }}
         run: |
-          python dmm_auto_post.py
+          python fanza_auto_post.py
