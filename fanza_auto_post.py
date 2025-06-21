@@ -5,7 +5,7 @@
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
 ・全ての時間処理・判定・ログ出力を日本時間（JST）で統一
 ・APIのサンプル画像取得ロジックを最新版構造（sampleImageURL/sample_l,image）に完全対応
-・タグ（女優・レーベル・ジャンル）・説明文も「iteminfo」配下から確実に取得
+・タグ（女優・レーベル・ジャンル）・本文はiteminfo配下から確実に取得、なければ自動生成
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
 
@@ -149,14 +149,20 @@ def create_wp_post(item):
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
-    # 本文説明文の取得（description→iteminfo["comment"]→iteminfo["story"]）
-    desc = item.get("description", "")
-    if not desc and "iteminfo" in item:
-        ii = item["iteminfo"]
-        if "comment" in ii:
-            desc = ii["comment"]
-        elif "story" in ii:
-            desc = ii["story"]
+    # 本文説明文の取得（description→iteminfo["comment"]→iteminfo["story"]→自動生成）
+    desc = ""
+    if "description" in item and item["description"]:
+        desc = item["description"]
+    elif "comment" in ii and ii["comment"]:
+        desc = ii["comment"]
+    elif "story" in ii and ii["story"]:
+        desc = ii["story"]
+    if not desc:
+        cast = "、".join([a["name"] for a in ii.get("actress", []) if "name" in a])
+        label = "、".join([l["name"] for l in ii.get("label", []) if "name" in l])
+        genres = "、".join([g["name"] for g in ii.get("genre", []) if "name" in g])
+        volume = item.get("volume", "")
+        desc = f"{title}。ジャンル：{genres}。出演：{cast}。レーベル：{label}。収録時間：{volume}。" if genres or cast or label or volume else "FANZA（DMM）素人動画の自動投稿です。"
 
     parts = []
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
