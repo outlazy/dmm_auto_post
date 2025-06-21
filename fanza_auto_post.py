@@ -4,7 +4,7 @@
 """
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
 ・全ての時間処理・判定・ログ出力を日本時間（JST）で統一
-・APIのサンプル画像取得ロジックを最新版（sample_l/image, sample_s/image）に対応
+・APIのサンプル画像取得ロジックを最新版構造（sampleImageURL/sample_l,image）に完全対応
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
 
@@ -55,10 +55,11 @@ def fetch_amateur_videos():
     for item in items:
         print("==== APIアイテム全体 ====")
         print(item)
-        if "sample_l" in item and "image" in item["sample_l"]:
-            print("sample_l images:", item["sample_l"]["image"])
-        if "sample_s" in item and "image" in item["sample_s"]:
-            print("sample_s images:", item["sample_s"]["image"])
+        siu = item.get("sampleImageURL", {})
+        if "sample_l" in siu and "image" in siu["sample_l"]:
+            print("sample_l images:", siu["sample_l"]["image"])
+        if "sample_s" in siu and "image" in siu["sample_s"]:
+            print("sample_s images:", siu["sample_s"]["image"])
     return items
 
 def is_released(item):
@@ -107,12 +108,13 @@ def create_wp_post(item):
         print(f"→ 既投稿: {title}（スキップ）")
         return False
 
-    # サンプル画像（最新版対応）
+    # サンプル画像（最新版構造対応）
     images = []
-    if "sample_l" in item and "image" in item["sample_l"]:
-        images = item["sample_l"]["image"]
-    elif "sample_s" in item and "image" in item["sample_s"]:
-        images = item["sample_s"]["image"]
+    siu = item.get("sampleImageURL", {})
+    if "sample_l" in siu and "image" in siu["sample_l"]:
+        images = siu["sample_l"]["image"]
+    elif "sample_s" in siu and "image" in siu["sample_s"]:
+        images = siu["sample_s"]["image"]
 
     if not images:
         print(f"→ サンプル画像なし: {title}（スキップ）")
