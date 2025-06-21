@@ -5,12 +5,14 @@
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
 ・全ての時間処理・判定・ログ出力を日本時間（JST）で統一
 ・APIのサンプル画像取得ロジックを最新版構造（sampleImageURL/sample_l,image）に完全対応
-・タグ（女優・レーベル・ジャンル）・本文はiteminfo配下から確実に取得、なければ自動生成
+・タグ（女優・レーベル・ジャンル）・本文はiteminfo配下から確実に取得、なければ商品ページからdescriptionをクロール＆最終自動生成
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
 
 import os
 import requests
+import re
+import json
 from datetime import datetime
 import pytz
 from wordpress_xmlrpc import Client, WordPressPost
@@ -93,6 +95,24 @@ def upload_image(wp, url):
         print(f"画像アップロード失敗: {url} ({e})")
         return None
 
+def fetch_description_from_detail_page(url):
+    """
+    商品ページからJSON-LD（Product構造化データ）descriptionを抽出
+    """
+    try:
+        r = requests.get(url, timeout=10)
+        m = re.search(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', r.text, re.DOTALL)
+        if m:
+            jd = json.loads(m.group(1))
+            desc = jd.get("description", "")
+            # descriptionが空ならsubjectOf > descriptionも探す
+            if not desc and "subjectOf" in jd and isinstance(jd["subjectOf"], dict):
+                desc = jd["subjectOf"].get("description", "")
+            return desc.strip()
+    except Exception as e:
+        print(f"商品ページ説明抽出失敗: {e}")
+    return ""
+
 def create_wp_post(item):
     WP_URL = get_env('WP_URL')
     WP_USER = get_env('WP_USER')
@@ -149,14 +169,16 @@ def create_wp_post(item):
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
-    # 本文説明文の取得（description→iteminfo["comment"]→iteminfo["story"]→自動生成）
-    desc = ""
-    if "description" in item and item["description"]:
+    # 本文説明文（優先順位: 商品ページ > description > iteminfo > 自動生成）
+    desc = fetch_description_from_detail_page(item["URL"])
+    if not desc and "description" in item and item["description"]:
         desc = item["description"]
-    elif "comment" in ii and ii["comment"]:
-        desc = ii["comment"]
-    elif "story" in ii and ii["story"]:
-        desc = ii["story"]
+    elif not desc:
+        # iteminfo
+        if "comment" in ii and ii["comment"]:
+            desc = ii["comment"]
+        elif "story" in ii and ii["story"]:
+            desc = ii["story"]
     if not desc:
         cast = "、".join([a["name"] for a in ii.get("actress", []) if "name" in a])
         label = "、".join([l["name"] for l in ii.get("label", []) if "name" in l])
