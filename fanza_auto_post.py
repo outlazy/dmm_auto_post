@@ -32,10 +32,11 @@ def fetch_amateur_videos():
         "api_id": API_ID,
         "affiliate_id": AFF_ID,
         "site": "video",
-        "service": "amateur",
-        "sort": "date",   # 新着順（発売日の新しい順）
+        "service": "digital",
+        "floor": "ama",      # ←ここが重要
+        "sort": "date",
         "output": "json",
-        "hits": 10,       # まとめて10件取得
+        "hits": 10,
     }
     resp = requests.get(DMM_API_URL, params=params, timeout=10)
     try:
@@ -48,6 +49,7 @@ def fetch_amateur_videos():
 
     items = resp.json().get("result", {}).get("items", [])
     return items
+
 
 def is_released(item):
     # APIレスポンスに「date」(発売日)フィールドが含まれている前提
