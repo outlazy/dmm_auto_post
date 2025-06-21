@@ -52,6 +52,13 @@ def fetch_amateur_videos():
     items = resp.json().get("result", {}).get("items", [])
     print(f"API取得件数: {len(items)}")
     for item in items:
+        for item in items:
+    print("==== APIアイテム全体 ====")
+    print(item)  # ここでitem全体を出力
+    print("==== sampleImageURLのみ ====")
+    print(item.get('sampleImageURL'))
+    # ...（元の処理続く）
+
         print("タイトル:", item.get('title'), "発売日:", item.get('date'), "URL:", item.get('URL'))
     return items
 
