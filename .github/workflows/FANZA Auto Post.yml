@@ -35,6 +35,10 @@ jobs:
       - name: Install Python dependencies
         run: pip install selenium python-wordpress-xmlrpc requests pytz
 
+      - name: Patch python-wordpress-xmlrpc for Python 3.10+
+        run: |
+          sed -i 's/from collections import Iterable/from collections.abc import Iterable/g' $(python -c "import site; print(site.getsitepackages()[0])")/wordpress_xmlrpc/*
+
       - name: Run FANZA Selenium Scraper
         env:
           DMM_API_ID: ${{ secrets.DMM_API_ID }}
