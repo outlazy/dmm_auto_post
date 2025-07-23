@@ -9,7 +9,6 @@ from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods.posts import NewPost
 
 def bypass_age_verification(driver):
-    """FANZA年齢認証ページを自動突破"""
     try:
         btns = driver.find_elements(
             By.XPATH,
@@ -25,26 +24,22 @@ def bypass_age_verification(driver):
         print("[debug] 年齢認証突破エラー:", e)
 
 def get_fanza_product(url):
-    """FANZA商品ページから情報取得＆認証突破"""
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-dev-shm-usage")
-
     driver = webdriver.Chrome(options=chrome_options)
     driver.get(url)
     time.sleep(2)
     bypass_age_verification(driver)
     time.sleep(2)
-
     try:
         title = driver.title.strip()
     except:
         title = ""
     print(f"[debug] Page title: {title}")
 
-    # description取得（<meta name="description"> or <script type="application/ld+json">）
     try:
         description = driver.find_element(By.CSS_SELECTOR, "meta[name='description']").get_attribute("content")
         print(f"[debug] 商品説明: {description[:100]}...")
@@ -61,8 +56,6 @@ def get_fanza_product(url):
         except:
             description = ""
             print("[debug] 商品説明取得できず")
-
-    # メイン画像例（サムネ）
     try:
         img = driver.find_element(By.CSS_SELECTOR, "meta[property='og:image']").get_attribute("content")
     except:
@@ -78,7 +71,6 @@ def get_fanza_product(url):
     }
 
 def post_to_wordpress(data):
-    """WordPress投稿処理"""
     wp_url = os.environ.get("WP_URL")
     wp_user = os.environ.get("WP_USER")
     wp_pass = os.environ.get("WP_PASS")
@@ -100,14 +92,20 @@ def post_to_wordpress(data):
     print(f"[debug] 投稿完了！記事ID: {post.id}")
 
 if __name__ == "__main__":
-    # ★商品URLは「GITHUB ACTIONSのenvまたはargsから取得」にすると便利！
-    # 例: secretsからDMM商品URLリスト渡す場合
-    product_url = os.environ.get("PRODUCT_URL")
-    if not product_url:
-        print("PRODUCT_URL 環境変数が未指定です。")
-        exit(1)
-    data = get_fanza_product(product_url)
-    if data["description"]:
-        post_to_wordpress(data)
-    else:
-        print("説明文が取得できなかったため、投稿をスキップします。")
+    # 商品リストは従来通りの方法で取得（例：API・ファイル・DB・直書きなど）
+    # ここは本番の取得ロジックに差し替えてOK！
+    product_urls = [
+        # 例：Secret管理した一つだけ（複数もOK）
+        os.environ.get("PRODUCT_URL"),
+        # 追加で他の取得方法やリストをappend可能！
+        # "https://www.dmm.co.jp/digital/videoa/-/detail/=/cid=xxx/",
+    ]
+    for url in product_urls:
+        if not url:
+            print("PRODUCT_URL 未指定（空データ）なのでスキップ")
+            continue
+        data = get_fanza_product(url)
+        if data["description"]:
+            post_to_wordpress(data)
+        else:
+            print(f"{url} 説明文が取得できなかったため、投稿をスキップします。")
