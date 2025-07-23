@@ -37,7 +37,13 @@ jobs:
 
       - name: Patch python-wordpress-xmlrpc for Python 3.10+
         run: |
-          find $(python -c "import site; print(site.getsitepackages()[0])")/wordpress_xmlrpc/ -type f -name "*.py" -exec sed -i 's/from collections import Iterable/from collections.abc import Iterable/g' {} +
+          pkg_path=$(python -c "import site; print(site.getsitepackages()[0])")/wordpress_xmlrpc/
+          find "$pkg_path" -type f -name "*.py" -exec sed -i \
+            -e 's/from collections import Iterable/from collections.abc import Iterable/g' \
+            -e 's/from collections import Mapping/from collections.abc import Mapping/g' \
+            -e 's/from collections import MutableMapping/from collections.abc import MutableMapping/g' \
+            -e 's/from collections import Sequence/from collections.abc import Sequence/g' \
+            {} +
 
       - name: Run FANZA Selenium Scraper
         env:
