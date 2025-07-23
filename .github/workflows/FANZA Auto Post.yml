@@ -1,9 +1,9 @@
 name: FANZA Auto Post
 
 on:
-  workflow_dispatch:      # 手動実行もOK
+  workflow_dispatch:
   schedule:
-    - cron: '0 18 * * *'  # JST03:00(UTC18:00)に毎日自動実行
+    - cron: '0 18 * * *'
 
 jobs:
   fanza:
@@ -37,7 +37,7 @@ jobs:
 
       - name: Patch python-wordpress-xmlrpc for Python 3.10+
         run: |
-          sed -i 's/from collections import Iterable/from collections.abc import Iterable/g' $(python -c "import site; print(site.getsitepackages()[0])")/wordpress_xmlrpc/*
+          find $(python -c "import site; print(site.getsitepackages()[0])")/wordpress_xmlrpc/ -type f -name "*.py" -exec sed -i 's/from collections import Iterable/from collections.abc import Iterable/g' {} +
 
       - name: Run FANZA Selenium Scraper
         env:
