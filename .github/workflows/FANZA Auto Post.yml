@@ -33,7 +33,7 @@ jobs:
           chmod +x /usr/local/bin/chromedriver
 
       - name: Install Python dependencies
-        run: pip install selenium wordpress-xmlrpc requests pytz
+        run: pip install selenium python-wordpress-xmlrpc requests pytz
 
       - name: Run FANZA Selenium Scraper
         env:
