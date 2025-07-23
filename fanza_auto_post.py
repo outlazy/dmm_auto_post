@@ -51,27 +51,47 @@ def fetch_amateur_videos():
         "affiliate_id": AFF_ID,
         "site": "FANZA",
         "service": "digital",
-        "floor": "videoc",
+        "floor": "videoc",    # 素人動画
         "sort": "date",
         "output": "json",
         "hits": 20,
     }
     resp = requests.get(DMM_API_URL, params=params, timeout=10)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except Exception:
+        print("---- DMM API Error ----")
+        print(resp.text)
+        print("----------------------")
+        raise
+
     items = resp.json().get("result", {}).get("items", [])
     print(f"API取得件数: {len(items)}")
+    for item in items:
+        print("==== APIアイテム全体 ====")
+        print(item)
+        siu = item.get("sampleImageURL", {})
+        if "sample_l" in siu and "image" in siu["sample_l"]:
+            print("sample_l images:", siu["sample_l"]["image"])
+        if "sample_s" in siu and "image" in siu["sample_s"]:
+            print("sample_s images:", siu["sample_s"]["image"])
     return items
 
 def is_released(item):
     date_str = item.get("date")
     if not date_str:
         return False
-    jst = pytz.timezone('Asia/Tokyo')
-    release_date = jst.localize(datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S"))
-    return release_date <= now_jst()
+    try:
+        jst = pytz.timezone('Asia/Tokyo')
+        release_date = jst.localize(datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S"))
+        return release_date <= now_jst()
+    except Exception:
+        return True
 
 def contains_jukujo(item):
-    genres = [g.get("name", "") for g in item.get("iteminfo", {}).get("genre", [])]
+    # iteminfo->genreから"熟女"を判定
+    ii = item.get("iteminfo", {})
+    genres = [g.get("name", "") for g in ii.get("genre", []) if "name" in g]
     return "熟女" in genres
 
 def make_affiliate_link(url, aff_id):
@@ -88,13 +108,15 @@ def upload_image(wp, url):
         name = os.path.basename(url.split("?")[0])
         media_data = {"name": name, "type": "image/jpeg", "bits": xmlrpc_client.Binary(data)}
         res = wp.call(media.UploadFile(media_data))
-        return res.get("id"), res.get("url")
+        return res.get("id")
     except Exception as e:
         print(f"画像アップロード失敗: {url} ({e})")
-        return None, url
+        return None
 
 def is_valid_description(desc):
-    if not desc or len(desc) < 30:
+    if not desc:
+        return False
+    if len(desc) < 30:
         return False
     for ng in NG_DESCRIPTIONS:
         if ng in desc:
@@ -103,44 +125,47 @@ def is_valid_description(desc):
 
 def fetch_description_from_detail_page(url, item):
     """
-    商品ページから<meta name="description">またはJSON-LD内の"description"を取得し、
-    NG文の場合はAPIデータにフォールバック。
+    商品ページからdescription（metaタグまたはJSON-LD内）だけ抽出し、NG文の場合はAPIの説明にフォールバック
     """
     try:
         r = requests.get(url, timeout=10)
-        r.raise_for_status()
         html = r.text
-        # 1. meta description
-        m = re.search(
-            r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
-            html, re.IGNORECASE
-        )
-        if m and is_valid_description(m.group(1).strip()):
-            return m.group(1).strip()
-        # 2. JSON-LD
-        m2 = re.search(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
-                       html, re.DOTALL)
-        if m2:
-            jd = json.loads(m2.group(1))
-            desc = jd.get("description", "")
-            if not desc and isinstance(jd.get("subjectOf"), dict):
-                desc = jd["subjectOf"].get("description", "")
+
+        # 1. metaタグ
+        m = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        if m:
+            desc = m.group(1).strip()
             if is_valid_description(desc):
-                return desc.strip()
+                return desc
+
+        # 2. JSON-LD内の"description"
+        m_script = re.search(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)
+        if m_script:
+            try:
+                jd = json.loads(m_script.group(1))
+                desc = jd.get("description", "")
+                if not desc and "subjectOf" in jd and isinstance(jd["subjectOf"], dict):
+                    desc = jd["subjectOf"].get("description", "")
+                if is_valid_description(desc):
+                    return desc.strip()
+            except Exception:
+                pass
     except Exception as e:
         print(f"商品ページ説明抽出失敗: {e}")
-    # APIフォールバック
+
+    # 3. APIデータでフォールバック
+    ii = item.get("iteminfo", {})
     for key in ("description", "comment", "story"):
-        val = item.get(key) or item.get("iteminfo", {}).get(key)
+        val = item.get(key) or ii.get(key)
         if is_valid_description(val):
             return val
-    # 最終フォールバック
-    cast = "、".join(a["name"] for a in item.get("iteminfo", {}).get("actress", []) if "name" in a)
-    label = "、".join(l["name"] for l in item.get("iteminfo", {}).get("label", []) if "name" in l)
-    genres = "、".join(g["name"] for g in item.get("iteminfo", {}).get("genre", []) if "name" in g)
+    # 4. なければ自動生成
+    cast = "、".join([a["name"] for a in ii.get("actress", []) if "name" in a])
+    label = "、".join([l["name"] for l in ii.get("label", []) if "name" in l])
+    genres = "、".join([g["name"] for g in ii.get("genre", []) if "name" in g])
     volume = item.get("volume", "")
     base = f"{item['title']}。ジャンル：{genres}。出演：{cast}。レーベル：{label}。収録時間：{volume}。"
-    return base
+    return base if len(base) > 10 else "FANZA（DMM）素人動画の自動投稿です。"
 
 def create_wp_post(item):
     WP_URL = get_env('WP_URL')
@@ -151,64 +176,99 @@ def create_wp_post(item):
 
     wp = Client(WP_URL, WP_USER, WP_PASS)
     title = item["title"]
+
+    # 投稿済みチェック
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if any(p.title == title for p in existing):
         print(f"→ 既投稿: {title}（スキップ）")
         return False
 
+    # サンプル画像
+    images = []
     siu = item.get("sampleImageURL", {})
-    images = siu.get("sample_l", {}).get("image") or siu.get("sample_s", {}).get("image") or []
+    if "sample_l" in siu and "image" in siu["sample_l"]:
+        images = siu["sample_l"]["image"]
+    elif "sample_s" in siu and "image" in siu["sample_s"]:
+        images = siu["sample_s"]["image"]
+
     if not images:
         print(f"→ サンプル画像なし: {title}（スキップ）")
         return False
 
-    thumb_id, thumb_url = upload_image(wp, images[0])
-    inline_id, inline_url = upload_image(wp, images[0])
+    thumb_id = upload_image(wp, images[0]) if images else None
 
+    # タグ（レーベル・メーカー・女優・ジャンル）はiteminfo配下から抽出
+    tags = set()
+    ii = item.get("iteminfo", {})
+    # レーベル
+    if "label" in ii and ii["label"]:
+        for l in ii["label"]:
+            if "name" in l:
+                tags.add(l["name"])
+    # メーカー
+    if "maker" in ii and ii["maker"]:
+        for m in ii["maker"]:
+            if "name" in m:
+                tags.add(m["name"])
+    # 女優
+    if "actress" in ii and ii["actress"]:
+        for a in ii["actress"]:
+            if "name" in a:
+                tags.add(a["name"])
+    # ジャンル
+    if "genre" in ii and ii["genre"]:
+        for g in ii["genre"]:
+            if "name" in g:
+                tags.add(g["name"])
+
+    aff_link = make_affiliate_link(item["URL"], AFF_ID)
+
+    # 本文：説明文のみ
     desc = fetch_description_from_detail_page(item["URL"], item)
     if not desc:
         desc = "FANZA（DMM）素人動画の自動投稿です。"
 
     parts = []
-    # 画像リンク＋タイトル
-    parts.append(f'<p><a href="{make_affiliate_link(item["URL"], AFF_ID)}" target="_blank">'
-                 f'<img src="{inline_url}" alt="{title}"></a></p>')
-    parts.append(f'<p><a href="{make_affiliate_link(item["URL"], AFF_ID)}" target="_blank">{title}</a></p>')
-
-    # 説明文＋JSON-LDスクリプト差し込み
-    parts.append(f'<div>{desc}</div>')
-    parts.append("""<script type="application/ld+json">
-{"@context":"http://schema.org","@type":"Product","name":"ひまり","image":"https://pics.dmm.co.jp/digital/amateur/orecz196/orecz196jp.jpg","description":"ひまりちゃん（20）大学の後輩ちゃんとハメハメしてきました。世間では卒業したら高学歴というスタンプを良い意味で押されるくらいには頭の良い大学に、勉強して入っきたインテリの女の子なので、色恋系には疎いので、女子としてみてないよ感を出したらイケましたw私服姿しか見たことなかったですが、なかなかいい身体。なんかそのギャップにめちゃくちゃ興奮したので、思いっきり中出ししちゃいました。","sku":"orecz196","brand":{"@type":"Brand","name":"俺の素人-Z-"},"subjectOf":{"@type":"VideoObject","name":"ひまり","description":"ひまりちゃん（20）大学の後輩ちゃんとハメハメしてきました。世間では卒業したら高学歴というスタンプを良い意味で押されるくらいには頭の良い大学に、勉強して入っきたインテリの女の子なので、色恋系には疎いので、女子としてみてないよ感を出したらイケましたw私服姿しか見たことなかったですが、なかなかいい身体。なんかそのギャップにめちゃくちゃ興奮したので、思いっきり中出ししちゃいました。","contentUrl":"https://cc3001.dmm.co.jp/litevideo/freepv/o/ore/orecz196/orecz196sm.mp4","thumbnailUrl":"https://pics.dmm.co.jp/digital/amateur/orecz196/orecz196jp.jpg","uploadDate":"2025-07-23","actor":{"@type":"Person","name":"ひまり","alternateName":"ひまり"},"genre":["ハイビジョン","巨乳","企画","中出し","女子大生","ナンパ"]},"offers":{"@type":"Offer","availability":"https://schema.org/InStock","priceCurrency":"JPY","price":"400"}}
-</script>""")
-
-    # 続きの画像やリンク
+    parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
+    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
+    if desc:
+        parts.append(f'<div>{desc}</div>')
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    parts.append(f'<p><a href="{make_affiliate_link(item["URL"], AFF_ID)}" target="_blank">'
-                 f'<img src="{inline_url}" alt="{title}"></a></p>')
-    parts.append(f'<p><a href="{make_affiliate_link(item["URL"], AFF_ID)}" target="_blank">{title}</a></p>')
+    parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
+    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
 
     post = WordPressPost()
     post.title = title
+    post.content = "\n".join(parts)
     if thumb_id:
         post.thumbnail = thumb_id
-    post.content = "\n".join(parts)
-    post.terms_names = {"category": [CATEGORY]}
+    post.terms_names = {"category": [CATEGORY], "post_tag": list(tags)}
+    post.post_status = "publish"
     wp.call(posts.NewPost(post))
     print(f"✔ 投稿完了: {title}")
     return True
 
 def main():
-    client = Client(get_env('WP_URL'), get_env('WP_USER'), get_env('WP_PASS'))
-    published = {p.title for p in client.call(GetPosts({'number': 100, 'post_status': 'publish'}))}
-    items = fetch_amateur_videos()
-    for item in items:
-        if item["title"] in published:
-            continue
-        if not is_released(item) or contains_jukujo(item):
-            continue
-        if create_wp_post(item):
-            break
+    print(f"[{now_jst().strftime('%Y-%m-%d %H:%M:%S')}] 投稿開始")
+    try:
+        items = fetch_amateur_videos()
+        posted = False
+        for item in items:
+            if not is_released(item):
+                print(f"→ 未発売: {item.get('title')}")
+                continue
+            if contains_jukujo(item):
+                print(f"→ 熟女ジャンル: {item.get('title')}（スキップ）")
+                continue
+            if create_wp_post(item):
+                posted = True
+                break  # 1件投稿で終了
+        if not posted:
+            print("新規投稿なし")
+    except Exception as e:
+        print(f"エラー: {e}")
+    print(f"[{now_jst().strftime('%Y-%m-%d %H:%M:%S')}] 投稿終了")
 
 if __name__ == "__main__":
     main()
