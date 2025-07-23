@@ -4,7 +4,7 @@
 """
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
 ・meta description（HTMLタグ付）をそのままWP本文へ
-・日本時間（JST）で動作
+・User-Agent/Accept-Language/Cookieで警告回避
 ・ジャンルに「熟女」が含まれる場合は必ずスキップ
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
@@ -19,7 +19,7 @@ from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
-from html import unescape  # ← ここ追加！
+from html import unescape
 
 DMM_API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
 
@@ -114,11 +114,19 @@ def upload_image(wp, url):
 
 def fetch_description_from_detail_page(url, item):
     """
-    商品ページから<meta name="description" content="...">を全て抽出し、
-    「FANZA(ファンザ)」や日本語が含まれるものを最優先でコピペ返す
+    商品ページから<meta name="description" content="...">を抜き出し
+    User-Agent・Accept-Language・Cookie（age_check_done=1）指定で本物の紹介文を取得
+    警告用（英語/18禁警告）は自動スキップ、日本語紹介文だけ返す
     """
     try:
-        r = requests.get(url, timeout=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8"
+        }
+        cookies = {
+            "age_check_done": "1"
+        }
+        r = requests.get(url, timeout=10, headers=headers, cookies=cookies)
         html = r.text
 
         # 全ての<meta name="description" content="...">を抽出
@@ -127,7 +135,6 @@ def fetch_description_from_detail_page(url, item):
             html, re.IGNORECASE
         )
         if meta_descs:
-            from html import unescape
             # 「FANZA」「ファンザ」または日本語が含まれるものを最優先
             for desc in meta_descs:
                 decoded = unescape(desc.strip())
@@ -140,8 +147,6 @@ def fetch_description_from_detail_page(url, item):
     except Exception as e:
         print(f"商品ページ説明抽出失敗: {e}")
     return ""
-
-
 
 def create_wp_post(item):
     WP_URL = get_env('WP_URL')
