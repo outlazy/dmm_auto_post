@@ -232,7 +232,7 @@ def create_wp_post(item):
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     if desc:
-        parts.append(f'<div>{desc}</div>')
+        parts.append(f'<blockquote>{desc}</blockquote>')
     for img in images[1:]:
         parts.append(f'<p><img src="{img}" alt="{title}"></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
