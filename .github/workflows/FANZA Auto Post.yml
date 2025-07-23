@@ -34,12 +34,10 @@ jobs:
         run: pip install selenium python-wordpress-xmlrpc requests pytz
 
       - name: Patch all 'from collections import' for Python 3.10+
-        run: |
-          sitepkg=$(python -c "import site; print(site.getsitepackages()[0])") && find "$sitepkg" -type f -name "*.py" -exec sed -i -e 's/from collections import Iterable/from collections.abc import Iterable/g' -e 's/from collections import Mapping/from collections.abc import Mapping/g' -e 's/from collections import MutableMapping/from collections.abc import MutableMapping/g' -e 's/from collections import Sequence/from collections.abc import Sequence/g' {} +
+        run: sitepkg=$(python -c "import site; print(site.getsitepackages()[0])") && find "$sitepkg" -type f -name "*.py" -exec sed -i -e 's/from collections import Iterable/from collections.abc import Iterable/g' -e 's/from collections import Mapping/from collections.abc import Mapping/g' -e 's/from collections import MutableMapping/from collections.abc import MutableMapping/g' -e 's/from collections import Sequence/from collections.abc import Sequence/g' {} +
 
       - name: DEBUG: grep for 'from collections import Iterable' in site-packages
-        run: |
-          grep -r "from collections import Iterable" $(python -c "import site; print(site.getsitepackages()[0])") || true
+        run: grep -r "from collections import Iterable" $(python -c "import site; print(site.getsitepackages()[0])") || true
 
       - name: Run FANZA Selenium Scraper
         env:
