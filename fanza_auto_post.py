@@ -3,7 +3,7 @@
 
 """
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
-・meta description（HTMLタグ付）をそのままWP本文へ
+・JSON-LD（<script type="application/ld+json">）のdescriptionを最優先でWP本文へ
 ・User-Agent/Accept-Language/Cookieで警告回避
 ・ジャンルに「熟女」が含まれる場合は必ずスキップ
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
@@ -114,9 +114,8 @@ def upload_image(wp, url):
 
 def fetch_description_from_detail_page(url, item):
     """
-    商品ページから<meta name="description" content="...">を抜き出し
-    User-Agent・Accept-Language・Cookie（age_check_done=1）指定で本物の紹介文を取得
-    警告用（英語/18禁警告）は自動スキップ、日本語紹介文だけ返す
+    商品ページから<script type="application/ld+json">内の"description"を最優先で抽出して返す。
+    なければmeta descriptionなどをフォールバック。
     """
     try:
         headers = {
@@ -129,21 +128,41 @@ def fetch_description_from_detail_page(url, item):
         r = requests.get(url, timeout=10, headers=headers, cookies=cookies)
         html = r.text
 
-        # 全ての<meta name="description" content="...">を抽出
+        # 1. JSON-LD（application/ld+json）からdescriptionを最優先で抜き出す
+        ld_jsons = re.findall(
+            r'<script[^>]+type=[\'"]application/ld\+json[\'"][^>]*>(.*?)</script>',
+            html, re.DOTALL | re.IGNORECASE
+        )
+        for ld in ld_jsons:
+            try:
+                data = json.loads(ld.strip())
+                # descriptionを優先
+                if isinstance(data, dict) and "description" in data:
+                    desc = unescape(data["description"].strip())
+                    if desc:
+                        return desc
+                # "subjectOf"の中にもdescriptionがある場合
+                if isinstance(data, dict) and "subjectOf" in data and isinstance(data["subjectOf"], dict):
+                    sdesc = unescape(data["subjectOf"].get("description", "").strip())
+                    if sdesc:
+                        return sdesc
+            except Exception as e:
+                continue  # 複数scriptがある場合もあるのでスルー
+
+        # 2. JSON-LDになかったらmeta description（警告文除外）も試しに探す
         meta_descs = re.findall(
             r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
             html, re.IGNORECASE
         )
         if meta_descs:
-            # 「FANZA」「ファンザ」または日本語が含まれるものを最優先
             for desc in meta_descs:
                 decoded = unescape(desc.strip())
                 if "FANZA" in decoded or "ファンザ" in decoded or re.search(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]', decoded):
                     return decoded
-            # なければ2個目、それもなければ1個目
             if len(meta_descs) > 1:
                 return unescape(meta_descs[1].strip())
             return unescape(meta_descs[0].strip())
+
     except Exception as e:
         print(f"商品ページ説明抽出失敗: {e}")
     return ""
@@ -200,7 +219,7 @@ def create_wp_post(item):
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
-    # 本文：meta descriptionタグ（HTMLデコード済み！）
+    # 本文：JSON-LD description
     desc = fetch_description_from_detail_page(item["URL"], item)
     if not desc:
         desc = "FANZA（DMM）素人動画の自動投稿です。"
