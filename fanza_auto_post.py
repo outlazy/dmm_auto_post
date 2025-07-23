@@ -3,7 +3,7 @@
 
 """
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
-・年齢確認＆リダイレクト後の個別商品ページだけで紹介文抽出・投稿
+・個別商品ページのみ紹介文抽出・投稿（人間ぽくアクセス：セッション/ヘッダ/トップ初期化）
 ・カテゴリトップや汎用ランディング等、個別ページでない場合は投稿自体スキップ
 ・共通説明文も絶対除外
 ・「熟女」ジャンル含む場合はスキップ
@@ -99,23 +99,37 @@ def upload_image(wp, url):
 
 def fetch_description_from_detail_page(url, item):
     """
-    年齢確認＆リダイレクト後の個別商品ページで<script type="application/ld+json">内descriptionだけを抽出。
+    セッション＋ヘッダ偽装＋トップページ初期化で人間ぽくアクセス。
+    個別商品ページで<script type="application/ld+json">内description抽出。
     共通説明文やカテゴリ・汎用ページはタイトルで判定して絶対除外＆投稿自体しない！
     """
     try:
+        NG_COMMONS = [
+            "総合アダルトサイト", "人気AV女優の独占作品", "創業20年の実績", "FANZA(ファンザ)", "会員様にご利用"
+        ]
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8"
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": "https://www.dmm.co.jp/",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
         }
-        cookies = {
-            "age_check_done": "1"
-        }
-        # 最終リダイレクト先までたどる
-        r = requests.get(url, timeout=10, headers=headers, cookies=cookies, allow_redirects=True)
-        html = r.text
+        with requests.Session() as s:
+            s.headers.update(headers)
+            # 一度トップページでCookie初期化
+            s.get("https://www.dmm.co.jp/", timeout=10)
+            # 次に商品ページへ本気リクエスト
+            r = s.get(url, timeout=10, allow_redirects=True)
+            html = r.text
 
         # debug: 最終URL/タイトル/HTML一部を出力
-        print(f"[debug] Fetched URL: {r.url}")
+        import re
         m = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
         page_title = m.group(1) if m else ""
         print(f"[debug] Page title: {page_title}")
@@ -124,11 +138,6 @@ def fetch_description_from_detail_page(url, item):
         if not item["title"] in page_title:
             print("[debug] 個別商品ページでないと判断 → 投稿しない")
             return None  # Noneで返すとcreate_wp_post側で投稿自体スキップ
-
-        # 共通説明NGワード集
-        NG_COMMONS = [
-            "総合アダルトサイト", "人気AV女優の独占作品", "創業20年の実績", "FANZA(ファンザ)", "会員様にご利用"
-        ]
 
         # 1. 全てのJSON-LD <script type="application/ld+json"> を抜き出す
         ld_jsons = re.findall(
