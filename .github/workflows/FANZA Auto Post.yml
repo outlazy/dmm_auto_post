@@ -1,10 +1,12 @@
 name: FANZA Auto Post
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:      # 手動実行ボタンを出す
+  schedule:               # 毎日JST 03:00 に自動実行
+    - cron: '0 18 * * *'  
 
 jobs:
-  fanza:
+  post:
     runs-on: ubuntu-latest
 
     steps:
@@ -14,26 +16,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.9'
 
-      - name: Install Google Chrome
-        run: wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && sudo apt install -y ./google-chrome-stable_current_amd64.deb
+      - name: Install dependencies
+        run: pip install requests python-wordpress-xmlrpc pytz
 
-      - name: Install ChromeDriver
-        run: CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+') && wget -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" || wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/124.0.6367.91/chromedriver_linux64.zip" && unzip /tmp/chromedriver.zip -d /usr/local/bin/ && mv /usr/local/bin/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver && chmod +x /usr/local/bin/chromedriver
-
-      - name: Install Python dependencies
-        run: pip install selenium python-wordpress-xmlrpc requests pytz
-
-      - name: Patch all 'from collections import' for Python 3.10+
-        run: sitepkg=$(python -c "import site; print(site.getsitepackages()[0])") && find "$sitepkg" -type f -name "*.py" -exec sed -i -e 's/from collections import Iterable/from collections.abc import Iterable/g' -e 's/from collections import Mapping/from collections.abc import Mapping/g' -e 's/from collections import MutableMapping/from collections.abc import MutableMapping/g' -e 's/from collections import Sequence/from collections.abc import Sequence/g' {} +
-
-      - name: Run FANZA Selenium Scraper
+      - name: Run FANZA Auto Post
         env:
-          DMM_API_ID: ${{ secrets.DMM_API_ID }}
+          DMM_API_ID:       ${{ secrets.DMM_API_ID }}
           DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
-          WP_URL: ${{ secrets.WP_URL }}
-          WP_USER: ${{ secrets.WP_USER }}
-          WP_PASS: ${{ secrets.WP_PASS }}
-          CATEGORY: ${{ secrets.CATEGORY }}
+          WP_URL:           ${{ secrets.WP_URL }}
+          WP_USER:          ${{ secrets.WP_USER }}
+          WP_PASS:          ${{ secrets.WP_PASS }}
+          CATEGORY:         ${{ secrets.CATEGORY }}
         run: python fanza_auto_post.py
