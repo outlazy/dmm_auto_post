@@ -115,30 +115,32 @@ def upload_image(wp, url):
 def fetch_description_from_detail_page(url, item):
     """
     商品ページから<meta name="description" content="...">を全て抽出し、
-    「FANZA(ファンザ)」や日本語が含まれるものを優先的に選んで返す（HTMLエスケープ解除済み）。
+    「FANZA(ファンザ)」や日本語が含まれるものを最優先でコピペ返す
     """
     try:
         r = requests.get(url, timeout=10)
         html = r.text
 
         # 全ての<meta name="description" content="...">を抽出
-        meta_descs = re.findall(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        meta_descs = re.findall(
+            r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+            html, re.IGNORECASE
+        )
         if meta_descs:
             from html import unescape
-            # 日本語または「FANZA(ファンザ)」含むものを優先
+            # 「FANZA」「ファンザ」または日本語が含まれるものを最優先
             for desc in meta_descs:
-                desc2 = unescape(desc.strip())
-                if "FANZA" in desc2 or "ファンザ" in desc2 or re.search(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]', desc2):
-                    return desc2
-            # もしなければ2番目以降を返す
+                decoded = unescape(desc.strip())
+                if "FANZA" in decoded or "ファンザ" in decoded or re.search(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]', decoded):
+                    return decoded
+            # なければ2個目、それもなければ1個目
             if len(meta_descs) > 1:
                 return unescape(meta_descs[1].strip())
-            # それもなければ1つ目を返す
             return unescape(meta_descs[0].strip())
     except Exception as e:
         print(f"商品ページ説明抽出失敗: {e}")
-
     return ""
+
 
 
 def create_wp_post(item):
