@@ -17,18 +17,10 @@ jobs:
           python-version: '3.11'
 
       - name: Install Google Chrome
-        run: |
-          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt install -y ./google-chrome-stable_current_amd64.deb
+        run: wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && sudo apt install -y ./google-chrome-stable_current_amd64.deb
 
       - name: Install ChromeDriver
-        run: |
-          CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+')
-          wget -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" || \
-          wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/124.0.6367.91/chromedriver_linux64.zip"
-          unzip /tmp/chromedriver.zip -d /usr/local/bin/
-          mv /usr/local/bin/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
-          chmod +x /usr/local/bin/chromedriver
+        run: CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+') && wget -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" || wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/124.0.6367.91/chromedriver_linux64.zip" && unzip /tmp/chromedriver.zip -d /usr/local/bin/ && mv /usr/local/bin/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver && chmod +x /usr/local/bin/chromedriver
 
       - name: Install Python dependencies
         run: pip install selenium python-wordpress-xmlrpc requests pytz
