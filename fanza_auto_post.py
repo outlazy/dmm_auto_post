@@ -3,10 +3,9 @@
 
 """
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
+・meta description（HTMLタグ付）をそのままWP本文へ
 ・日本時間（JST）で動作
-・APIサンプル画像/タグもiteminfo配下から自動抽出
 ・ジャンルに「熟女」が含まれる場合は必ずスキップ
-・本文には「商品個別の説明文だけ」記載、DMMの注意書きや短文は自動除外
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
 """
 
@@ -20,6 +19,7 @@ from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
+from html import unescape  # ← ここ追加！
 
 DMM_API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
 
@@ -89,7 +89,6 @@ def is_released(item):
         return True
 
 def contains_jukujo(item):
-    # iteminfo->genreから"熟女"を判定
     ii = item.get("iteminfo", {})
     genres = [g.get("name", "") for g in ii.get("genre", []) if "name" in g]
     return "熟女" in genres
@@ -115,17 +114,18 @@ def upload_image(wp, url):
 
 def fetch_description_from_detail_page(url, item):
     """
-    商品ページから<meta name="description" content="...">内だけを抽出し、それ以外は空文字返す
+    商品ページから<meta name="description" content="...">内を抽出し、HTMLエスケープを解除して返す
     """
     try:
         r = requests.get(url, timeout=10)
         html = r.text
-
         # metaタグのdescriptionのみ抽出
         m = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
         if m:
             desc = m.group(1).strip()
             if desc:
+                # HTMLデコードで公式表示そのまま再現
+                desc = unescape(desc)
                 return desc
     except Exception as e:
         print(f"商品ページ説明抽出失敗: {e}")
@@ -165,22 +165,18 @@ def create_wp_post(item):
     # タグ（レーベル・メーカー・女優・ジャンル）はiteminfo配下から抽出
     tags = set()
     ii = item.get("iteminfo", {})
-    # レーベル
     if "label" in ii and ii["label"]:
         for l in ii["label"]:
             if "name" in l:
                 tags.add(l["name"])
-    # メーカー
     if "maker" in ii and ii["maker"]:
         for m in ii["maker"]:
             if "name" in m:
                 tags.add(m["name"])
-    # 女優
     if "actress" in ii and ii["actress"]:
         for a in ii["actress"]:
             if "name" in a:
                 tags.add(a["name"])
-    # ジャンル
     if "genre" in ii and ii["genre"]:
         for g in ii["genre"]:
             if "name" in g:
@@ -188,7 +184,7 @@ def create_wp_post(item):
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
-    # 本文：meta descriptionタグのみ
+    # 本文：meta descriptionタグ（HTMLデコード済み！）
     desc = fetch_description_from_detail_page(item["URL"], item)
     if not desc:
         desc = "FANZA（DMM）素人動画の自動投稿です。"
