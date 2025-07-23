@@ -45,6 +45,10 @@ jobs:
             -e 's/from collections import Sequence/from collections.abc import Sequence/g' \
             {} +
 
+      - name: DEBUG: grep for 'from collections import Iterable' in site-packages
+        run: |
+          grep -r "from collections import Iterable" $(python -c "import site; print(site.getsitepackages()[0])") || true
+
       - name: Run FANZA Selenium Scraper
         env:
           DMM_API_ID: ${{ secrets.DMM_API_ID }}
