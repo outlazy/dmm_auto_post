@@ -2,8 +2,6 @@ name: FANZA Auto Post
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 18 * * *'
 
 jobs:
   fanza:
