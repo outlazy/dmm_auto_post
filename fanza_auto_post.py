@@ -3,9 +3,10 @@
 
 """
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
-・年齢確認＆リダイレクト後の個別ページで<script type="application/ld+json">のdescriptionだけ投稿
-・共通説明文を絶対除外
-・ジャンルに「熟女」含む場合はスキップ
+・年齢確認＆リダイレクト後の個別商品ページだけで紹介文抽出・投稿
+・カテゴリトップや汎用ランディング等、個別ページでない場合は投稿自体スキップ
+・共通説明文も絶対除外
+・「熟女」ジャンル含む場合はスキップ
 ・全て環境変数で管理（configファイル不要）
 """
 
@@ -59,11 +60,6 @@ def fetch_amateur_videos():
     for item in items:
         print("==== APIアイテム全体 ====")
         print(item)
-        siu = item.get("sampleImageURL", {})
-        if "sample_l" in siu and "image" in siu["sample_l"]:
-            print("sample_l images:", siu["sample_l"]["image"])
-        if "sample_s" in siu and "image" in siu["sample_s"]:
-            print("sample_s images:", siu["sample_s"]["image"])
     return items
 
 def is_released(item):
@@ -103,8 +99,8 @@ def upload_image(wp, url):
 
 def fetch_description_from_detail_page(url, item):
     """
-    年齢確認＆リダイレクト後の個別商品ページで<script type="application/ld+json">内の
-    商品descriptionだけを抽出し、共通説明文なら必ず除外する
+    年齢確認＆リダイレクト後の個別商品ページで<script type="application/ld+json">内descriptionだけを抽出。
+    共通説明文やカテゴリ・汎用ページはタイトルで判定して絶対除外＆投稿自体しない！
     """
     try:
         headers = {
@@ -118,6 +114,17 @@ def fetch_description_from_detail_page(url, item):
         r = requests.get(url, timeout=10, headers=headers, cookies=cookies, allow_redirects=True)
         html = r.text
 
+        # debug: 最終URL/タイトル/HTML一部を出力
+        print(f"[debug] Fetched URL: {r.url}")
+        m = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
+        page_title = m.group(1) if m else ""
+        print(f"[debug] Page title: {page_title}")
+
+        # ページタイトルに商品名が無いならカテゴリ・汎用ページ判定で終了
+        if not item["title"] in page_title:
+            print("[debug] 個別商品ページでないと判断 → 投稿しない")
+            return None  # Noneで返すとcreate_wp_post側で投稿自体スキップ
+
         # 共通説明NGワード集
         NG_COMMONS = [
             "総合アダルトサイト", "人気AV女優の独占作品", "創業20年の実績", "FANZA(ファンザ)", "会員様にご利用"
@@ -130,10 +137,11 @@ def fetch_description_from_detail_page(url, item):
         )
         from html import unescape
         for ld in ld_jsons:
-            ld = ld.strip()
-            ld = re.sub(r'<!--.*?-->', '', ld, flags=re.DOTALL)
+            ld_clean = ld.strip()
+            ld_clean = re.sub(r'<!--.*?-->', '', ld_clean, flags=re.DOTALL)
+            ld_clean = ld_clean.replace("\n", "").replace("\r", "").replace("\t", "")
             try:
-                data = json.loads(ld)
+                data = json.loads(ld_clean)
                 # 配列形式にも対応
                 if isinstance(data, list):
                     for d in data:
@@ -145,7 +153,6 @@ def fetch_description_from_detail_page(url, item):
                             sdesc = unescape(d["subjectOf"].get("description", "").strip())
                             if sdesc and not any(ng in sdesc for ng in NG_COMMONS):
                                 return sdesc
-                # 辞書形式
                 elif isinstance(data, dict):
                     if "description" in data and data["description"]:
                         desc = unescape(data["description"].strip())
@@ -156,9 +163,10 @@ def fetch_description_from_detail_page(url, item):
                         if sdesc and not any(ng in sdesc for ng in NG_COMMONS):
                             return sdesc
             except Exception as e:
+                print(f"[debug] JSON-LD parse error: {e}")
                 continue
 
-        # 2. JSON-LDで出なければmeta descriptionもNGワードで除外しながら拾う
+        # 2. meta descriptionもNGワードで除外
         meta_descs = re.findall(
             r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
             html, re.IGNORECASE
@@ -168,10 +176,10 @@ def fetch_description_from_detail_page(url, item):
             if not any(ng in decoded for ng in NG_COMMONS):
                 return decoded
 
-        # なければ空文字
+        # なければNone（create_wp_postで投稿スキップ）
     except Exception as e:
         print(f"商品ページ説明抽出失敗: {e}")
-    return ""
+    return None
 
 def create_wp_post(item):
     WP_URL = get_env('WP_URL')
@@ -225,20 +233,19 @@ def create_wp_post(item):
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
-    # 本文：個別descriptionだけ
+    # 本文：ちゃんと個別ページのみ！
     desc = fetch_description_from_detail_page(item["URL"], item)
-    if not desc:
-        desc = ""  # 本当に何もなければ空
+    if desc is None or desc.strip() == "":
+        print(f"→ 個別ページ未判定 or 説明文なし: {title}（スキップ）")
+        return False
 
     parts = []
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
-    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
-    if desc:
-        parts.append(f'<blockquote>{desc}</blockquote>')
-    for img in images[1:]:
-        parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
-    parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
+    parts.append(f'<p><strong><a href="{aff_link}" target="_blank">{title}</a></strong></p>')
+    parts.append(f'<blockquote>{desc}</blockquote>')
+    if len(images) > 1:
+        for img in images[1:]:
+            parts.append(f'<p><img src="{img}" alt="{title}"></p>')
 
     post = WordPressPost()
     post.title = title
