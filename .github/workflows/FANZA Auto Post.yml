@@ -1,9 +1,9 @@
 name: FANZA Auto Post
 
 on:
-  workflow_dispatch:      # 手動実行OK
+  workflow_dispatch:      # 手動実行もOK
   schedule:
-    - cron: '0 18 * * *'  # JST03:00(UTC18:00)に毎日実行
+    - cron: '0 18 * * *'  # JST03:00(UTC18:00)に毎日自動実行
 
 jobs:
   fanza:
@@ -29,6 +29,7 @@ jobs:
           wget -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" || \
           wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/124.0.6367.91/chromedriver_linux64.zip"
           unzip /tmp/chromedriver.zip -d /usr/local/bin/
+          mv /usr/local/bin/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
           chmod +x /usr/local/bin/chromedriver
 
       - name: Install Python dependencies
