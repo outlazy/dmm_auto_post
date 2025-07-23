@@ -113,59 +113,24 @@ def upload_image(wp, url):
         print(f"画像アップロード失敗: {url} ({e})")
         return None
 
-def is_valid_description(desc):
-    if not desc:
-        return False
-    if len(desc) < 30:
-        return False
-    for ng in NG_DESCRIPTIONS:
-        if ng in desc:
-            return False
-    return True
-
 def fetch_description_from_detail_page(url, item):
     """
-    商品ページからdescription（metaタグまたはJSON-LD内）だけ抽出し、NG文の場合はAPIの説明にフォールバック
+    商品ページから<meta name="description" content="...">内だけを抽出し、それ以外は空文字返す
     """
     try:
         r = requests.get(url, timeout=10)
         html = r.text
 
-        # 1. metaタグ
+        # metaタグのdescriptionのみ抽出
         m = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
         if m:
             desc = m.group(1).strip()
-            if is_valid_description(desc):
+            if desc:
                 return desc
-
-        # 2. JSON-LD内の"description"
-        m_script = re.search(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)
-        if m_script:
-            try:
-                jd = json.loads(m_script.group(1))
-                desc = jd.get("description", "")
-                if not desc and "subjectOf" in jd and isinstance(jd["subjectOf"], dict):
-                    desc = jd["subjectOf"].get("description", "")
-                if is_valid_description(desc):
-                    return desc.strip()
-            except Exception:
-                pass
     except Exception as e:
         print(f"商品ページ説明抽出失敗: {e}")
 
-    # 3. APIデータでフォールバック
-    ii = item.get("iteminfo", {})
-    for key in ("description", "comment", "story"):
-        val = item.get(key) or ii.get(key)
-        if is_valid_description(val):
-            return val
-    # 4. なければ自動生成
-    cast = "、".join([a["name"] for a in ii.get("actress", []) if "name" in a])
-    label = "、".join([l["name"] for l in ii.get("label", []) if "name" in l])
-    genres = "、".join([g["name"] for g in ii.get("genre", []) if "name" in g])
-    volume = item.get("volume", "")
-    base = f"{item['title']}。ジャンル：{genres}。出演：{cast}。レーベル：{label}。収録時間：{volume}。"
-    return base if len(base) > 10 else "FANZA（DMM）素人動画の自動投稿です。"
+    return ""
 
 def create_wp_post(item):
     WP_URL = get_env('WP_URL')
@@ -223,7 +188,7 @@ def create_wp_post(item):
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
-    # 本文：説明文のみ
+    # 本文：meta descriptionタグのみ
     desc = fetch_description_from_detail_page(item["URL"], item)
     if not desc:
         desc = "FANZA（DMM）素人動画の自動投稿です。"
