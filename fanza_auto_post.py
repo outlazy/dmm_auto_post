@@ -3,10 +3,10 @@
 
 """
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
-・年齢確認済みページの<script type="application/ld+json">内descriptionを最大限抜き出して本文にする
-・User-Agent/Accept-Language/Cookieで警告回避
-・「熟女」ジャンル含む場合はスキップ
-・configファイル不要、環境変数で管理
+・年齢確認＆リダイレクト後の個別ページで<script type="application/ld+json">のdescriptionだけ投稿
+・共通説明文を絶対除外
+・ジャンルに「熟女」含む場合はスキップ
+・全て環境変数で管理（configファイル不要）
 """
 
 import os
@@ -103,8 +103,8 @@ def upload_image(wp, url):
 
 def fetch_description_from_detail_page(url, item):
     """
-    年齢確認済みページの <script type="application/ld+json"> 内 description を最大限抜き出す！
-    配列、複数script、subjectOf、meta descriptionまで全部サーチ
+    年齢確認＆リダイレクト後の個別商品ページで<script type="application/ld+json">内の
+    商品descriptionだけを抽出し、共通説明文なら必ず除外する
     """
     try:
         headers = {
@@ -114,59 +114,61 @@ def fetch_description_from_detail_page(url, item):
         cookies = {
             "age_check_done": "1"
         }
-        r = requests.get(url, timeout=10, headers=headers, cookies=cookies)
+        # 最終リダイレクト先までたどる
+        r = requests.get(url, timeout=10, headers=headers, cookies=cookies, allow_redirects=True)
         html = r.text
 
-        # 1. すべてのJSON-LD <script type="application/ld+json"> を抜き出す
+        # 共通説明NGワード集
+        NG_COMMONS = [
+            "総合アダルトサイト", "人気AV女優の独占作品", "創業20年の実績", "FANZA(ファンザ)", "会員様にご利用"
+        ]
+
+        # 1. 全てのJSON-LD <script type="application/ld+json"> を抜き出す
         ld_jsons = re.findall(
             r'<script[^>]+type=[\'"]application/ld\+json[\'"][^>]*>(.*?)</script>',
             html, re.DOTALL | re.IGNORECASE
         )
+        from html import unescape
         for ld in ld_jsons:
             ld = ld.strip()
-            # コメントや無効文字は削除
             ld = re.sub(r'<!--.*?-->', '', ld, flags=re.DOTALL)
             try:
                 data = json.loads(ld)
-                # 配列の場合
+                # 配列形式にも対応
                 if isinstance(data, list):
                     for d in data:
-                        if isinstance(d, dict):
-                            if "description" in d and d["description"]:
-                                desc = unescape(d["description"].strip())
-                                if desc:
-                                    return desc
-                            if "subjectOf" in d and isinstance(d["subjectOf"], dict):
-                                sdesc = unescape(d["subjectOf"].get("description", "").strip())
-                                if sdesc:
-                                    return sdesc
-                # 辞書の場合
+                        if isinstance(d, dict) and "description" in d and d["description"]:
+                            desc = unescape(d["description"].strip())
+                            if desc and not any(ng in desc for ng in NG_COMMONS):
+                                return desc
+                        if isinstance(d, dict) and "subjectOf" in d and isinstance(d["subjectOf"], dict):
+                            sdesc = unescape(d["subjectOf"].get("description", "").strip())
+                            if sdesc and not any(ng in sdesc for ng in NG_COMMONS):
+                                return sdesc
+                # 辞書形式
                 elif isinstance(data, dict):
                     if "description" in data and data["description"]:
                         desc = unescape(data["description"].strip())
-                        if desc:
+                        if desc and not any(ng in desc for ng in NG_COMMONS):
                             return desc
                     if "subjectOf" in data and isinstance(data["subjectOf"], dict):
                         sdesc = unescape(data["subjectOf"].get("description", "").strip())
-                        if sdesc:
+                        if sdesc and not any(ng in sdesc for ng in NG_COMMONS):
                             return sdesc
             except Exception as e:
                 continue
 
-        # 2. JSON-LDでだめならmeta descriptionも見る
+        # 2. JSON-LDで出なければmeta descriptionもNGワードで除外しながら拾う
         meta_descs = re.findall(
             r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
             html, re.IGNORECASE
         )
-        if meta_descs:
-            for desc in meta_descs:
-                decoded = unescape(desc.strip())
-                if "FANZA" in decoded or "ファンザ" in decoded or re.search(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]', decoded):
-                    return decoded
-            if len(meta_descs) > 1:
-                return unescape(meta_descs[1].strip())
-            return unescape(meta_descs[0].strip())
+        for desc in meta_descs:
+            decoded = unescape(desc.strip())
+            if not any(ng in decoded for ng in NG_COMMONS):
+                return decoded
 
+        # なければ空文字
     except Exception as e:
         print(f"商品ページ説明抽出失敗: {e}")
     return ""
@@ -223,10 +225,10 @@ def create_wp_post(item):
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
 
-    # 本文：最大限descriptionを抜き出す！
+    # 本文：個別descriptionだけ
     desc = fetch_description_from_detail_page(item["URL"], item)
     if not desc:
-        desc = "FANZA（DMM）素人動画の自動投稿です。"
+        desc = ""  # 本当に何もなければ空
 
     parts = []
     parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
