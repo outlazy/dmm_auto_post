@@ -25,15 +25,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # （任意）REST到達のスモークテスト
       - name: Smoke test WordPress REST
         env:
           WP_URL: ${{ secrets.WP_URL }}
           WP_USER: ${{ secrets.WP_USER }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
         run: |
+          set -e
+          echo "Try: $WP_URL/wp-json/"
           AUTH=$(printf "%s:%s" "$WP_USER" "$WP_APP_PASSWORD" | base64)
-          curl -sS -H "Authorization: Basic $AUTH" "$WP_URL/wp-json/" | head -c 200
+          curl -sS -D - -o /dev/null -H "Authorization: Basic $AUTH" -A "curl/REST-check" "$WP_URL/wp-json/"
+          echo
+          echo "Fallback: $WP_URL/?rest_route=/"
+          curl -sS -D - -o /dev/null -H "Authorization: Basic $AUTH" -A "curl/REST-check" "$WP_URL/?rest_route=/"
 
       - name: Run FANZA auto post script
         env:
