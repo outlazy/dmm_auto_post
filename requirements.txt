@@ -1,6 +1,6 @@
 requests
 beautifulsoup4
 lxml
-python-slugify
 tenacity
-python-dotenv
+python-slugify
+pytz
