@@ -1,4 +1,6 @@
 requests
 beautifulsoup4
-python-wordpress-xmlrpc==2.3
-pytz
+lxml
+python-slugify
+tenacity
+python-dotenv
