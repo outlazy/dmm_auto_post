@@ -1,7 +1,20 @@
-name: FANZA Auto Post (REST)
+name: FANZA Auto Post (REST/POST-only v3)
 
 on:
   workflow_dispatch:
+    inputs:
+      test_product_url:
+        description: "(任意) 単発テスト用の商品URL"
+        required: false
+      test_title:
+        description: "(任意) テスト投稿タイトル"
+        required: false
+      test_tags:
+        description: "(任意) カンマ区切りのタグ"
+        required: false
+      test_images:
+        description: "(任意) カンマ区切りの画像URL"
+        required: false
   schedule:
     - cron: '0 */4 * * *'
 
@@ -25,20 +38,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Smoke test WordPress REST
-        env:
-          WP_URL: ${{ secrets.WP_URL }}
-          WP_USER: ${{ secrets.WP_USER }}
-          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
-        run: |
-          set -e
-          echo "Try: $WP_URL/wp-json/"
-          AUTH=$(printf "%s:%s" "$WP_USER" "$WP_APP_PASSWORD" | base64)
-          curl -sS -D - -o /dev/null -H "Authorization: Basic $AUTH" -A "curl/REST-check" "$WP_URL/wp-json/"
-          echo
-          echo "Fallback: $WP_URL/?rest_route=/"
-          curl -sS -D - -o /dev/null -H "Authorization: Basic $AUTH" -A "curl/REST-check" "$WP_URL/?rest_route=/"
-
       - name: Run FANZA auto post script
         env:
           WP_URL: ${{ secrets.WP_URL }}
@@ -47,4 +46,8 @@ jobs:
           DMM_API_ID: ${{ secrets.DMM_API_ID }}
           DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
           CATEGORY: ${{ secrets.CATEGORY }}
+          TEST_PRODUCT_URL: ${{ inputs.test_product_url }}
+          TEST_TITLE: ${{ inputs.test_title }}
+          TEST_TAGS: ${{ inputs.test_tags }}
+          TEST_IMAGES: ${{ inputs.test_images }}
         run: python fanza_auto_post.py
