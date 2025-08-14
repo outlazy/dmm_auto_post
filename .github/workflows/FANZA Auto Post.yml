@@ -1,48 +1,9 @@
-name: FANZA Auto Post (REST/POST-only v3)
-
-on:
-  workflow_dispatch:
-    inputs:
-      test_product_url:
-        description: "(任意) 単発テスト用の商品URL"
-        required: false
-      test_title:
-        description: "(任意) テスト投稿タイトル"
-        required: false
-      test_tags:
-        description: "(任意) カンマ区切りのタグ"
-        required: false
-      test_images:
-        description: "(任意) カンマ区切りの画像URL"
-        required: false
-  schedule:
-    - cron: '0 */4 * * *'
-
-jobs:
-  auto_post:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
       - name: Run FANZA auto post script
         env:
           WP_URL: ${{ secrets.WP_URL }}
           WP_USER: ${{ secrets.WP_USER }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          WP_PASS: ${{ secrets.WP_PASS }}   # 追加
           DMM_API_ID: ${{ secrets.DMM_API_ID }}
           DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
           CATEGORY: ${{ secrets.CATEGORY }}
@@ -50,4 +11,3 @@ jobs:
           TEST_TITLE: ${{ inputs.test_title }}
           TEST_TAGS: ${{ inputs.test_tags }}
           TEST_IMAGES: ${{ inputs.test_images }}
-        run: python fanza_auto_post.py
