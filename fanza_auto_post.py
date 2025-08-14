@@ -1,5 +1,5 @@
-# fanza_auto_post.py
-import os, re, sys, requests
+# from wp_rest_client import create_post
+from wp_client_dual import create_post_dual as create_post
 from bs4 import BeautifulSoup
 from tenacity import retry, wait_exponential, stop_after_attempt
 from slugify import slugify
