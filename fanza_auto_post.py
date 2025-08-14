@@ -1,6 +1,11 @@
 import os
 import sys
+import re
 import requests
+
+from bs4 import BeautifulSoup
+from tenacity import retry, wait_exponential, stop_after_attempt
+from slugify import slugify
 
 from wp_rest_client import create_post
 from bs4 import BeautifulSoup
