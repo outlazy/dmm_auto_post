@@ -1,9 +1,9 @@
-# fanza_auto_post.py (minimal REST)
+# fanza_auto_post.py — XML-RPC minimal post
 import os, re, requests
 from bs4 import BeautifulSoup
 from tenacity import retry, wait_exponential, stop_after_attempt
 from slugify import slugify
-from wp_rest_client import create_post
+from wp_xmlrpc_client import create_post
 
 UA = {"User-Agent": "Mozilla/5.0"}
 
@@ -46,13 +46,13 @@ def post_product(product_url: str, title: str, tags: list[str], image_urls: list
     html = fetch_html(product_url)
     desc = extract_description(html)
     content_html = build_content(product_url, image_urls, desc)
-    slug = slugify(title) or re.sub(r"[^a-z0-9\-]+", "-", title.lower()).strip("-")
+    slug = slugify(title) or re.sub(r"[^a-z0-9\\-]+", "-", title.lower()).strip("-")
     create_post(
         title=title,
         content_html=content_html,
-        tag_names=[],                # ← ターム作成しない
-        category_name=None,          # ← カテゴリ作成しない
-        featured_img_url=None,       # ← メディアAPI使わない
+        tag_names=tags,          # タグ名で付与（存在しない場合は無視されることあり）
+        category_name=None,
+        featured_img_url=None,
         slug=slug,
         status=status,
         meta={"source_url": product_url}
@@ -65,6 +65,6 @@ if __name__ == "__main__":
         tags = [t.strip() for t in os.getenv("TEST_TAGS", "").split(",") if t.strip()]
         imgs = [u.strip() for u in os.getenv("TEST_IMAGES", "").split(",") if u.strip()]
         post_product(url, title, tags, imgs)
-        print("[OK] posted one via TEST_* envs (minimal REST)")
+        print("[OK] posted one via TEST_* envs (XML-RPC)")
     else:
-        print("Runner OK: set TEST_PRODUCT_URL to post once (minimal REST)")
+        print("Runner OK: set TEST_PRODUCT_URL to post once (XML-RPC)")
