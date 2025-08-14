@@ -49,4 +49,6 @@ jobs:
           TEST_TITLE: ${{ github.event.inputs.test_title }}
           TEST_TAGS: ${{ github.event.inputs.test_tags }}
           TEST_IMAGES: ${{ github.event.inputs.test_images }}
-        run: python fanza_auto_post.py
+        run: |
+          echo "import re" >> fanza_auto_post.py
+          python fanza_auto_post.py
