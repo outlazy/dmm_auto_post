@@ -24,7 +24,10 @@ steps:
     run: |
       python -m pip install --upgrade pip
       pip install -r requirements.txt
+      python -V
+      pip list | sed -n '1,80p'
 
+  # ▼ 固定テスト入力（B案）：ここを必ず編集してから実行してください
   - name: Run FANZA Auto Post (REST固定テスト)
     env:
       # ▼ WordPress（REST用）
@@ -37,10 +40,33 @@ steps:
       DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
       CATEGORY: ${{ secrets.CATEGORY }}
 
-      # ▼ 固定のテスト入力（B案）：ここを編集して使う
-      TEST_PRODUCT_URL: "https://example.com/your-product"    # ★商品ページURL
+      # ▼ 固定のテスト入力（B案）：★必ず実URLに差し替えてね
+      TEST_PRODUCT_URL: "https://example.com/your-product"    # ★商品ページURL（差し替え必須）
       TEST_TITLE: "テスト投稿"
       TEST_TAGS: "タグA,タグB"
       TEST_IMAGES: "https://example.com/a.jpg,https://example.com/b.jpg"
+    shell: bash
     run: |
+      set -euo pipefail
+      echo "WP_URL=$WP_URL"
+      # --- ガード：プレースホルダURLのままならエラーで止める ---
+      if [[ -z "${TEST_PRODUCT_URL}" || "${TEST_PRODUCT_URL}" == *"example.com/your-product"* ]]; then
+        echo "::error ::TEST_PRODUCT_URL が未設定かプレースホルダです。YAML内を実URLに編集してから実行してね。"; exit 1;
+      fi
+
+      # --- 認証デバッグ（POSTのみ）---
+      AUTH=$(printf "%s:%s" "$WP_USER" "$WP_APP_PASSWORD" | base64)
+      TS=$(date +%s)
+      echo "[AUTH-POST] $WP_URL/?rest_route=/wp/v2/tags"
+      curl -sS -D - -o >(head -c 400) \
+           -H "Authorization: Basic $AUTH" \
+           -H "Content-Type: application/json" \
+           -X POST \
+           -d '{"name":"api-auth-check-'"$TS"'"}' \
+           "$WP_URL/?rest_route=/wp/v2/tags" || true
+
+      # --- 一時的に重複ログを掃除（必要に応じて外してOK）---
+      rm -f .posted.log || true
+
+      # --- 本処理 ---
       python fanza_auto_post.py
