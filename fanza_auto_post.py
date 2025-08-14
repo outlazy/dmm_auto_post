@@ -1,5 +1,6 @@
 import os
 import sys
+import requests
 
 from wp_rest_client import create_post
 from bs4 import BeautifulSoup
