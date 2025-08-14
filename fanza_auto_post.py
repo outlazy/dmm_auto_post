@@ -1,4 +1,3 @@
-# from wp_rest_client import create_post
 from wp_rest_client import create_post
 from bs4 import BeautifulSoup
 from tenacity import retry, wait_exponential, stop_after_attempt
