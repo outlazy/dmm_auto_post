@@ -4,16 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       test_product_url:
-        description: "https://video.dmm.co.jp/amateur/content/?id=ppg017&i3_ref=list&i3_pst=1&dmmref=amateur_list"
+        description: "(任意) 単発テスト用の商品URL"
         required: false
       test_title:
-        description: "ききちゃん"
+        description: "(任意) テスト投稿タイトル"
         required: false
       test_tags:
-        description: "ギャル,コスプレ,独占配信,デカチン・巨根,ハイビジョン"
+        description: "(任意) カンマ区切りのタグ"
         required: false
       test_images:
-        description: "https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-001.jpg?f=webp,https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-002.jpg?f=webp,https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-003.jpg?f=webp,https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-004.jpg?f=webp,https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-005.jpg?f=webp"
+        description: "(任意) カンマ区切りの画像URL（先頭がアイキャッチ）"
         required: false
   schedule:
     - cron: '0 */4 * * *'
