@@ -1,27 +1,11 @@
-name: WordPress Auto Post (REST本番)
+name: FANZA Auto Post (XML-RPC版)
 
 on:
   workflow_dispatch:
-    inputs:
-      test_product_url:
-        description: "(任意) 単発テスト用の商品URL"
-        required: false
-      test_title:
-        description: "(任意) テスト投稿タイトル"
-        required: false
-      test_tags:
-        description: "(任意) カンマ区切りのタグ"
-        required: false
-      test_images:
-        description: "(任意) カンマ区切りの画像URL（先頭がアイキャッチ）"
-        required: false
-  schedule:
-    - cron: '0 */4 * * *'
 
 jobs:
   auto-post:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,48 +13,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Patch fanza_auto_post.py for missing imports
-        run: |
-          grep -q '^import re' fanza_auto_post.py || sed -i '1i import re' fanza_auto_post.py
-          grep -q '^import requests' fanza_auto_post.py || sed -i '1i import requests' fanza_auto_post.py
-          grep -q '^import os' fanza_auto_post.py || sed -i '1i import os' fanza_auto_post.py
-          
-      - name: Auth debug (POST /?rest_route=/wp/v2/tags)
+      - name: Run FANZA Auto Post (XML-RPC)
         env:
           WP_URL: ${{ secrets.WP_URL }}
           WP_USER: ${{ secrets.WP_USER }}
-          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
-        run: |
-          set -e
-          AUTH=$(printf "%s:%s" "$WP_USER" "$WP_APP_PASSWORD" | base64)
-          TS=$(date +%s)
-          echo "[AUTH DEBUG] POST $WP_URL/?rest_route=/wp/v2/tags"
-          curl -sS -D - \
-               -H "Authorization: Basic $AUTH" \
-               -H "Content-Type: application/json" \
-               -X POST \
-               -d '{"name":"api-auth-check-'"$TS"'"}' \
-               "$WP_URL/?rest_route=/wp/v2/tags" | sed -n '1,120p'
-
-      - name: Run WordPress Auto Post (REST)
-        env:
-          WP_URL: ${{ secrets.WP_URL }}
-          WP_USER: ${{ secrets.WP_USER }}
-          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
-          DMM_API_ID: ${{ secrets.DMM_API_ID }}
-          DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
+          WP_PASS: ${{ secrets.WP_PASS }} # ← WP_PASS を Secrets に登録
           CATEGORY: ${{ secrets.CATEGORY }}
-          TEST_PRODUCT_URL: ${{ github.event.inputs.test_product_url }}
-          TEST_TITLE: ${{ github.event.inputs.test_title }}
-          TEST_TAGS: ${{ github.event.inputs.test_tags }}
-          TEST_IMAGES: ${{ github.event.inputs.test_images }}
         run: |
           python fanza_auto_post.py
