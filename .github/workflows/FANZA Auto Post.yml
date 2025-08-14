@@ -1,8 +1,52 @@
-name: minimal-run-button-test
+name: WordPress Auto Post (REST本番)
+
 on:
   workflow_dispatch:
+    inputs:
+      test_product_url:
+        description: "https://video.dmm.co.jp/amateur/content/?id=ppg017&i3_ref=list&i3_pst=1&dmmref=amateur_list"
+        required: false
+      test_title:
+        description: "ききちゃん"
+        required: false
+      test_tags:
+        description: "ギャル,コスプレ,独占配信,デカチン・巨根,ハイビジョン"
+        required: false
+      test_images:
+        description: "https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-001.jpg?f=webp,https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-002.jpg?f=webp,https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-003.jpg?f=webp,https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-004.jpg?f=webp,https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-005.jpg?f=webp"
+        required: false
+  schedule:
+    - cron: '0 */4 * * *'
+
 jobs:
-  ping:
+  auto-post:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - run: echo "it works"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run WordPress Auto Post (REST)
+        env:
+          WP_URL: ${{ secrets.WP_URL }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          DMM_API_ID: ${{ secrets.DMM_API_ID }}
+          DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
+          CATEGORY: ${{ secrets.CATEGORY }}
+          TEST_PRODUCT_URL: ${{ github.event.inputs.test_product_url }}
+          TEST_TITLE: ${{ github.event.inputs.test_title }}
+          TEST_TAGS: ${{ github.event.inputs.test_tags }}
+          TEST_IMAGES: ${{ github.event.inputs.test_images }}
+        run: python fanza_auto_post.py
