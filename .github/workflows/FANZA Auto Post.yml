@@ -41,6 +41,7 @@ jobs:
         run: |
           grep -q '^import re' fanza_auto_post.py || sed -i '1i import re' fanza_auto_post.py
           grep -q '^import requests' fanza_auto_post.py || sed -i '1i import requests' fanza_auto_post.py
+          grep -q '^import os' fanza_auto_post.py || sed -i '1i import os' fanza_auto_post.py
 
       - name: Run WordPress Auto Post (REST)
         env:
