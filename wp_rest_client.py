@@ -29,19 +29,24 @@ def _post_any(paths, json=None, data=None, headers=None, params=None, **kw):
     for u in paths:
         try:
             r = requests.post(u, params=params, json=json, data=data, headers=hdr, timeout=kw.get("timeout", 30))
-            r.raise_for_status()
-            return r
-        except requests.HTTPError as e:
-            last_exc = e
-            if e.response is not None and e.response.status_code in (401,403,404,405):
-                continue
-            raise
+            try:
+                r.raise_for_status()
+                return r
+            except requests.HTTPError as e:
+                # 401/403/404/405 のときレスポンス冒頭を吐いて次候補へ
+                body = (r.text or "")[:300].replace("\n", " ")
+                print(f"[REST DEBUG] {r.status_code} at {u} :: {body}", file=sys.stderr)
+                last_exc = e
+                if r.status_code in (401, 403, 404, 405):
+                    continue
+                raise
         except Exception as e:
             last_exc = e
             continue
     if last_exc:
         raise last_exc
     raise RuntimeError("_post_any: no candidates provided")
+
 
 # ターム確保（GETなし）：既存なら term_exists の term_id を拾う
 def ensure_term(name, taxonomy):  # taxonomy: 'tags' or 'categories'
