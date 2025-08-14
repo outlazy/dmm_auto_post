@@ -1,77 +1,13 @@
-name: FANZA Auto Post
-
-on:
-  workflow_dispatch:
-    inputs:
-      test_product_url:
-        description: "単発テスト用の商品URL（必須）"
-        required: true
-      test_title:
-        description: "テスト投稿タイトル（任意）"
-        required: false
-      test_tags:
-        description: "カンマ区切りのタグ（任意）"
-        required: false
-      test_images:
-        description: "カンマ区切りの画像URL（任意、先頭がアイキャッチ）"
-        required: false
-  schedule:
-    - cron: '0 */4 * * *'
-
-jobs:
-  auto_post:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      # ▼必要に応じて有効化：POSTでの認証確認（REST）。401ならサーバ側で Authorization ヘッダー伝播を確認。
-      # - name: Auth debug (POST /?rest_route=/wp/v2/tags)
-      #   env:
-      #     WP_URL: ${{ secrets.WP_URL }}
-      #     WP_USER: ${{ secrets.WP_USER }}
-      #     WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
-      #   run: |
-      #     AUTH=$(printf "%s:%s" "$WP_USER" "$WP_APP_PASSWORD" | base64)
-      #     TS=$(date +%s)
-      #     curl -sS -D - \
-      #       -H "Authorization: Basic $AUTH" \
-      #       -H "Content-Type: application/json" \
-      #       -X POST \
-      #       -d '{"name":"api-auth-check-'"$TS"'"}' \
-      #       "$WP_URL/?rest_route=/wp/v2/tags" | sed -n '1,80p'
-
       - name: Run auto poster
         env:
-          # ▼WordPress接続：REST（推奨）
-          WP_URL: ${{ secrets.WP_URL }}            # 例: https://example.com （/wp-json は付けない）
-          WP_USER: ${{ secrets.WP_USER }}          # ログインユーザー名
-          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}  # Application Password
-
-          # ▼フォールバック用（任意）：XML-RPC を使う場合のみ設定
-          WP_PASS: ${{ secrets.WP_PASS }}          # 通常のログインパスワード
-
-          # ▼その他
-          DMM_API_ID: ${{ secrets.DMM_API_ID }}
-          DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
+          WP_URL: ${{ secrets.WP_URL }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
           CATEGORY: ${{ secrets.CATEGORY }}
 
-          # ▼手動テスト入力（workflow_dispatch から渡る）
-          TEST_PRODUCT_URL: ${{ inputs.test_product_url }}
-          TEST_TITLE: ${{ inputs.test_title }}
-          TEST_TAGS: ${{ inputs.test_tags }}
-          TEST_IMAGES: ${{ inputs.test_images }}
+          # ▼テスト固定値（一時的）
+          TEST_PRODUCT_URL: "https://example.com/your-product"
+          TEST_TITLE: "テスト投稿"
+          TEST_TAGS: "タグA,タグB"
+          TEST_IMAGES: "https://example.com/a.jpg,https://example.com/b.jpg"
         run: python fanza_auto_post.py
