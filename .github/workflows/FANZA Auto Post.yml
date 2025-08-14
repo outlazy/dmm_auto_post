@@ -1,13 +1,46 @@
-      - name: Run auto poster
-        env:
-          WP_URL: ${{ secrets.WP_URL }}
-          WP_USER: ${{ secrets.WP_USER }}
-          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
-          CATEGORY: ${{ secrets.CATEGORY }}
+name: WordPress Auto Post (REST版・固定テスト入力B)
 
-          # ▼テスト固定値（一時的）
-          TEST_PRODUCT_URL: "https://example.com/your-product"
-          TEST_TITLE: "テスト投稿"
-          TEST_TAGS: "タグA,タグB"
-          TEST_IMAGES: "https://example.com/a.jpg,https://example.com/b.jpg"
-        run: python fanza_auto_post.py
+on:
+workflow_dispatch:
+schedule:
+- cron: '0 * * * *'  # 毎時実行（必要に応じて変更）
+
+jobs:
+auto-post:
+runs-on: ubuntu-latest
+timeout-minutes: 30
+
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+
+  - name: Set up Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: '3.11'
+      cache: 'pip'
+
+  - name: Install dependencies
+    run: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+
+  - name: Run FANZA Auto Post (REST固定テスト)
+    env:
+      # ▼ WordPress（REST用）
+      WP_URL: ${{ secrets.WP_URL }}            # 例: https://example.com （/wp-json は付けない）
+      WP_USER: ${{ secrets.WP_USER }}          # ログインユーザー名
+      WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}  # Application Password
+
+      # ▼ その他Secrets
+      DMM_API_ID: ${{ secrets.DMM_API_ID }}
+      DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
+      CATEGORY: ${{ secrets.CATEGORY }}
+
+      # ▼ 固定のテスト入力（B案）：ここを編集して使う
+      TEST_PRODUCT_URL: "https://example.com/your-product"    # ★商品ページURL
+      TEST_TITLE: "テスト投稿"
+      TEST_TAGS: "タグA,タグB"
+      TEST_IMAGES: "https://example.com/a.jpg,https://example.com/b.jpg"
+    run: |
+      python fanza_auto_post.py
