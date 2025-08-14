@@ -40,10 +40,10 @@ steps:
       CATEGORY: ${{ secrets.CATEGORY }}
 
       # ▼ 固定のテスト入力（B案）：★必ず実URLに差し替えてね
-      TEST_PRODUCT_URL: "https://example.com/your-product"    # ★商品ページURL（差し替え必須）
+      TEST_PRODUCT_URL: "https://video.dmm.co.jp/amateur/content/?id=ppg017&i3_ref=list&i3_pst=1&dmmref=amateur_list"    # ★商品ページURL（差し替え必須）
       TEST_TITLE: "テスト投稿"
       TEST_TAGS: "タグA,タグB"
-      TEST_IMAGES: "https://example.com/a.jpg,https://example.com/b.jpg"
+      TEST_IMAGES: "https://awsimgsrc.dmm.co.jp/pics_dig/digital/amateur/ppg017/ppg017jp-001.jpg?f=webp"
     shell: bash
     run: |
       set -euo pipefail
