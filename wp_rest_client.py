@@ -1,4 +1,4 @@
-# wp_rest_client.py (POST-only + auto fallback)
+# wp_rest_client.py (minimal REST: no term creation, no media upload)
 import os, base64, re, sys, requests
 from tenacity import retry, wait_exponential, stop_after_attempt
 
@@ -14,13 +14,9 @@ def _auth_header():
     token = base64.b64encode(f"{WP_USER}:{WP_APP_PASSWORD}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
-# REST候補（通常 /wp-json と ?rest_route= フォールバック）
 def _rest_candidates(path: str):
     path = path.lstrip("/")
-    return [
-        f"{WP_URL}/wp-json/{path}",
-        f"{WP_URL}/?rest_route=/{path}",
-    ]
+    return [f"{WP_URL}/wp-json/{path}", f"{WP_URL}/?rest_route=/{path}"]
 
 @retry(wait=wait_exponential(multiplier=1, min=2, max=20), stop=stop_after_attempt(3))
 def _post_any(paths, json=None, data=None, headers=None, params=None, **kw):
@@ -33,11 +29,10 @@ def _post_any(paths, json=None, data=None, headers=None, params=None, **kw):
                 r.raise_for_status()
                 return r
             except requests.HTTPError as e:
-                # 401/403/404/405 のときレスポンス冒頭を吐いて次候補へ
                 body = (r.text or "")[:300].replace("\n", " ")
                 print(f"[REST DEBUG] {r.status_code} at {u} :: {body}", file=sys.stderr)
                 last_exc = e
-                if r.status_code in (401, 403, 404, 405):
+                if r.status_code in (401,403,404,405):
                     continue
                 raise
         except Exception as e:
@@ -47,58 +42,36 @@ def _post_any(paths, json=None, data=None, headers=None, params=None, **kw):
         raise last_exc
     raise RuntimeError("_post_any: no candidates provided")
 
+# ==== ここから最小権限モード ====
+CATEGORY_ID_ENV = os.getenv("CATEGORY_ID", "").strip()
+TAG_IDS_ENV = os.getenv("TAG_IDS", "").strip()
 
-# ターム確保（GETなし）：既存なら term_exists の term_id を拾う
-def ensure_term(name, taxonomy):  # taxonomy: 'tags' or 'categories'
-    if not name:
-        return None
-    try:
-        r = _post_any(_rest_candidates(f"wp/v2/{taxonomy}"),
-                      json={"name": name}, headers={"Content-Type": "application/json"})
-        return r.json().get("id")
-    except requests.HTTPError as e:
-        if e.response is not None:
-            try:
-                data = e.response.json()
-                if isinstance(data, dict) and data.get("code") == "term_exists":
-                    return int(data.get("data", {}).get("term_id"))
-            except Exception:
-                pass
-        raise
+def _parse_ids(csv):
+    if not csv: return []
+    out = []
+    for x in csv.split(","):
+        x = x.strip()
+        if x.isdigit(): out.append(int(x))
+    return out
 
-# 画像アップロード
-def upload_image(img_url):
-    bin_ = requests.get(img_url, timeout=25, headers={"User-Agent": "Mozilla/5.0"}).content
-    filename = img_url.split("?")[0].split("/")[-1] or "image.jpg"
-    r = _post_any(_rest_candidates("wp/v2/media"),
-                  data=bin_,
-                  headers={
-                      "Content-Disposition": f'attachment; filename="{filename}"',
-                      "Content-Type": "application/octet-stream"
-                  })
-    return r.json()["id"]
-
-# 投稿作成（常に新規。重複回避は呼び出し側で）
 def create_post(*, title, content_html, tag_names=None, category_name=None,
                 featured_img_url=None, slug=None, status="publish", meta=None):
-    tag_ids = [ensure_term(t, "tags") for t in set(tag_names or []) if t]
-    cat_id = ensure_term(category_name, "categories") if category_name else None
+    # ターム作成＆メディアAPIは使わない
+    fixed_cat_ids = [int(CATEGORY_ID_ENV)] if CATEGORY_ID_ENV.isdigit() else []
+    fixed_tag_ids = _parse_ids(TAG_IDS_ENV)
 
-    featured_id = upload_image(featured_img_url) if featured_img_url else None
     safe_slug = re.sub(r"[^a-z0-9\-]+", "-", (slug or title).lower()).strip("-")
-
     payload = {
         "title": title,
         "content": content_html,
         "status": status,
-        "tags": [i for i in tag_ids if i],
         "slug": safe_slug,
         "meta": meta or {}
     }
-    if cat_id:
-        payload["categories"] = [cat_id]
-    if featured_id:
-        payload["featured_media"] = featured_id
+    if fixed_tag_ids:
+        payload["tags"] = fixed_tag_ids
+    if fixed_cat_ids:
+        payload["categories"] = fixed_cat_ids
 
     r = _post_any(_rest_candidates("wp/v2/posts"),
                   json=payload, headers={"Content-Type": "application/json"})
