@@ -8,6 +8,7 @@ FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動
 ・ジャンルに「熟女」が含まれる場合は必ずスキップ
 ・本文には「商品個別の説明文だけ」記載、DMMの注意書きや短文は自動除外
 ・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
+・サンプル画像は全てWordPressにアップロードし、直リンクは使用しない
 """
 
 import os
@@ -103,15 +104,38 @@ def make_affiliate_link(url, aff_id):
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
 def upload_image(wp, url):
+    """
+    画像をダウンロードしてWordPressにアップロードする。
+    戻り値: (media_id, wp_url) のタプル。失敗時は (None, None)。
+    wp_url は必ずWordPress上のURL（FANZAの直リンクは絶対に返さない）。
+    """
     try:
-        data = requests.get(url, timeout=10).content
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        data = resp.content
         name = os.path.basename(url.split("?")[0])
+        if not name or "." not in name:
+            name = "image.jpg"
         media_data = {"name": name, "type": "image/jpeg", "bits": xmlrpc_client.Binary(data)}
         res = wp.call(media.UploadFile(media_data))
-        return res.get("id")
+        print(f"  UploadFile レスポンス keys: {list(res.keys()) if isinstance(res, dict) else res}")
+        media_id = res.get("id") if isinstance(res, dict) else None
+        # "url" が最優先（WordPressの直接画像URL）
+        wp_url = None
+        if isinstance(res, dict):
+            wp_url = res.get("url") or res.get("link") or res.get("guid")
+        if not wp_url:
+            print(f"  警告: wp_urlが取得できませんでした。レスポンス: {res}")
+            return None, None
+        # 念のため、取得したURLがFANZAドメインでないことを確認
+        if "dmm.co.jp" in wp_url or "dmm.com" in wp_url or "fanza" in wp_url.lower():
+            print(f"  エラー: 取得URLがFANZAドメインです（スキップ）: {wp_url}")
+            return None, None
+        print(f"  アップロード成功: {name} → {wp_url}")
+        return media_id, wp_url
     except Exception as e:
         print(f"画像アップロード失敗: {url} ({e})")
-        return None
+        return None, None
 
 def is_valid_description(desc):
     if not desc:
@@ -183,19 +207,35 @@ def create_wp_post(item):
         print(f"→ 既投稿: {title}（スキップ）")
         return False
 
-    # サンプル画像
-    images = []
+    # サンプル画像URLを取得
+    fanza_images = []
     siu = item.get("sampleImageURL", {})
     if "sample_l" in siu and "image" in siu["sample_l"]:
-        images = siu["sample_l"]["image"]
+        fanza_images = siu["sample_l"]["image"]
     elif "sample_s" in siu and "image" in siu["sample_s"]:
-        images = siu["sample_s"]["image"]
+        fanza_images = siu["sample_s"]["image"]
 
-    if not images:
+    if not fanza_images:
         print(f"→ サンプル画像なし: {title}（スキップ）")
         return False
 
-    thumb_id = upload_image(wp, images[0]) if images else None
+    # 全サンプル画像をWordPressにアップロードし、WP上のURLを取得する
+    print(f"  サンプル画像 {len(fanza_images)} 枚をアップロード中...")
+    wp_images = []  # (media_id, wp_url) のリスト
+    for fanza_url in fanza_images:
+        media_id, wp_url = upload_image(wp, fanza_url)
+        if wp_url:
+            wp_images.append((media_id, wp_url))
+        else:
+            # アップロード失敗時はスキップ（直リンクは使わない）
+            print(f"  ↳ スキップ: {fanza_url}")
+
+    if not wp_images:
+        print(f"→ 画像アップロード全失敗: {title}（スキップ）")
+        return False
+
+    # サムネイルは1枚目のmedia_id
+    thumb_id = wp_images[0][0]
 
     # タグ（レーベル・メーカー・女優・ジャンル）はiteminfo配下から抽出
     tags = set()
@@ -228,14 +268,16 @@ def create_wp_post(item):
     if not desc:
         desc = "FANZA（DMM）素人動画の自動投稿です。"
 
+    # 本文にはWordPressにアップロード済みのURLを使用（直リンクなし）
+    first_wp_url = wp_images[0][1]
     parts = []
-    parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
+    parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{first_wp_url}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
     if desc:
         parts.append(f'<div>{desc}</div>')
-    for img in images[1:]:
-        parts.append(f'<p><img src="{img}" alt="{title}"></p>')
-    parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{images[0]}" alt="{title}"></a></p>')
+    for _, wp_url in wp_images[1:]:
+        parts.append(f'<p><img src="{wp_url}" alt="{title}"></p>')
+    parts.append(f'<p><a href="{aff_link}" target="_blank"><img src="{first_wp_url}" alt="{title}"></a></p>')
     parts.append(f'<p><a href="{aff_link}" target="_blank">{title}</a></p>')
 
     post = WordPressPost()
