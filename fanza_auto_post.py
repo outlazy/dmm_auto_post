@@ -508,16 +508,12 @@ def create_wp_post(item):
                 tags.add(entry["name"])
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
-    # 説明文: Playwrightで取得できた場合はそれを優先、なければAPIフィールドから
-    desc = (pw_data.get("description") if pw_data else None) or fetch_description(item)
 
     first_url = wp_images[0][1]
     parts = [
         f'<p><a href="{aff_link}" target="_blank"><img src="{first_url}" alt="{title}"></a></p>',
         f'<p><a href="{aff_link}" target="_blank">{title}</a></p>',
     ]
-    if desc:
-        parts.append(f'<div>{desc}</div>')
     for _, wp_url in wp_images[1:]:
         parts.append(f'<p><img src="{wp_url}" alt="{title}"></p>')
     parts += [
