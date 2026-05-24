@@ -124,13 +124,29 @@ def search_actress_profile(name, api_id, aff_id):
         print(f"  ActressSearch失敗: {e}")
     return None
 
+def fetch_size_from_product_page(url):
+    """商品ページのHTMLから「T152 B82(B) W54 H80」形式のサイズを取得する。"""
+    try:
+        resp = requests.get(url, timeout=10)
+        html = resp.text
+        # 「T152 B82(B) W54 H80」のような形式を検索
+        m = re.search(r'T(\d+)\s*B(\d+)\(([A-Za-z]+)\)\s*W(\d+)\s*H(\d+)', html)
+        if m:
+            size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
+            print(f"  サイズ(商品ページ): {size_str}")
+            return size_str
+    except Exception as e:
+        print(f"  商品ページサイズ取得失敗: {e}")
+    return None
+
 def build_title(item):
     """
     "名前 T158 B87(G) W58 H85" 形式のタイトルを返す。
     取得順:
       1. item["title"]       → 名前（年齢表記は除去）
       2. iteminfo.actress[0] → サイズ
-      3. ActressSearch API   → サイズ
+      3. 商品ページ          → サイズ（HTML直接スクレイピング）
+      4. ActressSearch API   → サイズ
       ※ サイズが取れなければ名前のみ
     """
     API_ID = get_env("DMM_API_ID")
@@ -158,7 +174,11 @@ def build_title(item):
             size_str = f"T{h} B{b}({c}) W{w} H{hip}"
             print(f"  サイズ(iteminfo): {size_str}")
 
-    # Step 3: ActressSearch API
+    # Step 3: 商品ページから直接スクレイピング
+    if not size_str:
+        size_str = fetch_size_from_product_page(item.get("URL", ""))
+
+    # Step 4: ActressSearch API
     if not size_str:
         base_name = re.sub(r'\(\d+\)', '', name).strip()
         for candidate in list(dict.fromkeys([base_name, name])):
