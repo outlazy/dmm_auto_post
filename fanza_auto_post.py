@@ -273,27 +273,48 @@ def _parse_sizes_from_html(html):
 
     return height, bust, cup, waist, hip
 
-def _fetch_html(url):
-    """年齢認証クッキー付きでHTMLを取得する"""
+def _make_fanza_session():
+    """年齢認証を通過したrequests.Sessionを返す"""
+    session = requests.Session()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Referer": "https://www.dmm.co.jp/",
     }
-    # FANZA年齢認証バイパス用クッキー
-    cookies = {
-        "ckcy": "1",          # 年齢確認済み
-        "cklg": "ja",         # 言語
-        "age_check_done": "1",
-        "dmmtoolbar_disp": "1",
-    }
-    r = requests.get(url, timeout=15, headers=headers, cookies=cookies)
+    # ドメインレベルでクッキーを設定（.dmm.co.jp 全体に送信される）
+    for name, val in [("ckcy", "1"), ("cklg", "ja"), ("age_check_done", "1")]:
+        session.cookies.set(name, val, domain=".dmm.co.jp")
+        session.cookies.set(name, val, domain="www.dmm.co.jp")
+    # 年齢確認フォームをPOSTしてセッションクッキーを取得
+    try:
+        r = session.get(
+            "https://www.dmm.co.jp/age_check/=/?rurl=https%3A%2F%2Fwww.dmm.co.jp%2F",
+            headers=headers, timeout=10, allow_redirects=True
+        )
+        # フォームのPOSTエンドポイントを探して送信
+        import re as _re
+        action_m = _re.search(r'<form[^>]+action=["\']([^"\']+)["\']', r.text, _re.IGNORECASE)
+        if action_m:
+            post_url = action_m.group(1)
+            if not post_url.startswith("http"):
+                post_url = "https://www.dmm.co.jp" + post_url
+            session.post(post_url, data={"ckcy": "1", "cklg": "ja"}, headers=headers, timeout=10)
+    except Exception as e:
+        print(f"  年齢認証セッション作成中エラー（続行）: {e}")
+    return session, headers
+
+
+def _fetch_html(url):
+    """年齢認証セッション付きでHTMLを取得する"""
+    session, headers = _make_fanza_session()
+    r = session.get(url, timeout=15, headers=headers, allow_redirects=True)
     r.raise_for_status()
     html = r.text
-    # 年齢認証ページが返ってきていないか確認
-    if "年齢認証" in html[:500] and len(html) < 5000:
+    if "年齢認証" in html[:1000]:
         print(f"  警告: 年齢認証ページが返されました ({url})")
+        print(f"  レスポンスサイズ: {len(html)} bytes")
+    else:
+        print(f"  ページ取得成功: {len(html)} bytes")
     return html
 
 def _calc_age(birthday_str):
@@ -417,6 +438,12 @@ def fetch_name_and_size_from_detail_page(url, item):
         if n and n not in search_candidates:
             search_candidates.append(n)
     print(f"  検索候補名: {search_candidates}")
+
+    # ── デバッグ: APIのcomment/descriptionフィールドを表示 ──
+    for dbg_key in ("comment", "description", "story"):
+        dbg_val = item.get(dbg_key) or ii.get(dbg_key) or ""
+        if dbg_val:
+            print(f"  [{dbg_key}]: {dbg_val[:200]}")
 
     # ── Step2: iteminfo.actress にサイズが入っている場合はそれを使う ──
     size_str = None
