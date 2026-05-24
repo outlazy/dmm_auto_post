@@ -284,134 +284,94 @@ def _fetch_html(url):
     r.raise_for_status()
     return r.text
 
+def search_actress_measurements(name, api_id, aff_id):
+    """
+    FANZA ActressSearch API で出演者名を検索し、
+    身長・バスト・カップ・ウエスト・ヒップを返す。
+    見つからない場合は None を返す。
+    """
+    try:
+        params = {
+            "api_id": api_id,
+            "affiliate_id": aff_id,
+            "keyword": name,
+            "output": "json",
+        }
+        resp = requests.get(
+            "https://api.dmm.com/affiliate/v3/ActressSearch",
+            params=params, timeout=10
+        )
+        resp.raise_for_status()
+        actresses = resp.json().get("result", {}).get("actress", [])
+        print(f"  ActressSearch「{name}」→ {len(actresses)}件")
+        if not actresses:
+            return None
+        a = actresses[0]
+        print(f"  ActressSearch hit: {a}")
+        height = str(a.get("height", "")).strip()
+        bust   = str(a.get("bust",   "")).strip()
+        cup    = str(a.get("cup",    "")).strip()
+        waist  = str(a.get("waist",  "")).strip()
+        hip    = str(a.get("hip",    "")).strip()
+        if height and bust and cup and waist and hip:
+            return f"T{height} B{bust}({cup}) W{waist} H{hip}"
+    except Exception as e:
+        print(f"  ActressSearch失敗: {e}")
+    return None
+
+
 def fetch_name_and_size_from_detail_page(url, item):
     """
-    video.dmm.co.jp/amateur/content/ ページから「名前」「サイズ」を取得し
+    出演者名と体型サイズを取得し
     "キミカ(27) T158 B87(G) W58 H85" 形式のタイトルを返す。
 
-    ページは年齢認証Cookie(ckcy=1)を付与してアクセスする。
-    取得できなかった場合は item["title"] のみを使用。
+    取得順:
+      1. item["title"] (APIタイトル) を名前として使用
+      2. FANZA ActressSearch API でサイズ検索
+      3. iteminfo.actress[0] の身長・スリーサイズフィールドを使用
+      4. サイズが取れない場合は名前のみ
     """
-    # DMM年齢認証bypass Cookie
-    AGE_COOKIES = "ckcy=1; cklg=1; age_check_done=1"
+    API_ID = get_env("DMM_API_ID")
+    AFF_ID = get_env("DMM_AFFILIATE_ID")
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Cookie": AGE_COOKIES,
-    }
-
-    name = None
-    size_str = None
-
-    # ── video.dmm.co.jp/amateur/content/ から名前・サイズを取得 ──
-    # アフィリエイトIDなしのクリーンURLで取得
-    cid = _extract_content_id(url)
-    clean_url = f"https://video.dmm.co.jp/amateur/content/?id={cid}" if cid else url
-
-    try:
-        r = requests.get(clean_url, headers=headers, timeout=15, allow_redirects=True)
-        html = r.text
-        print(f"  ページ取得: {clean_url} ({len(html)} bytes, status={r.status_code})")
-
-        # 年齢認証ページか確認
-        if "年齢認証" in html[:3000] or r.status_code in (301, 302, 403):
-            print(f"  年齢認証ページまたはリダイレクト → Cookieでリトライ")
-            # Cookieをセッションで送り直す
-            session = requests.Session()
-            session.headers.update(headers)
-            # 年齢認証ページを一度踏んでCookieをセット
-            session.get("https://www.dmm.co.jp/age_check/=/declared=yes/", timeout=10)
-            r = session.get(clean_url, timeout=15)
-            html = r.text
-            print(f"  リトライ後: ({len(html)} bytes, status={r.status_code})")
-
-        # デバッグ: 名前・サイズ周辺のHTML断片を表示
-        for kw in ["名前", "サイズ", "キミカ", "T1", "B8", "W5", "H8"]:
-            idx = html.find(kw)
-            if idx != -1:
-                print(f"  [{kw}] → {html[max(0,idx-30):idx+80].strip()!r}")
-
-        # ── 名前の抽出 ──
-        # パターン1: <th>名前</th><td>キミカ(27)</td>
-        for label in ["名前", "出演者", "女優"]:
-            m = re.search(
-                rf'<(?:th|dt)[^>]*>\s*{label}\s*</(?:th|dt)>\s*<(?:td|dd)[^>]*>(.*?)</(?:td|dd)>',
-                html, re.DOTALL | re.IGNORECASE
-            )
-            if m:
-                candidate = _strip_tags(m.group(1)).strip()
-                if candidate and "認証" not in candidate:
-                    name = candidate
-                    print(f"  名前取得(テーブル): {name}")
-                    break
-
-        # パターン2: "名前" の直後のテキスト
-        if not name:
-            m = re.search(r'名前[^\w]*([^\s<]{2,20}(?:\(\d+\))?)', html)
-            if m:
-                candidate = m.group(1).strip()
-                if candidate and "認証" not in candidate:
-                    name = candidate
-                    print(f"  名前取得(テキスト): {name}")
-
-        # ── サイズの抽出 ──
-        # パターン1: <th>サイズ</th><td>T158 B87(G) W58 H85</td>
-        m = re.search(
-            r'<(?:th|dt)[^>]*>\s*サイズ\s*</(?:th|dt)>\s*<(?:td|dd)[^>]*>(.*?)</(?:td|dd)>',
-            html, re.DOTALL | re.IGNORECASE
-        )
-        if m:
-            size_str = _strip_tags(m.group(1)).strip()
-            print(f"  サイズ取得(テーブル): {size_str}")
-
-        # パターン2: "サイズ" の直後に T/B/W/H 形式
-        if not size_str:
-            m = re.search(
-                r'サイズ[^\w]*(T\d{2,3}\s+B\d{2,3}\([A-Z]+\)\s+W\d{2,3}\s+H\d{2,3})',
-                html
-            )
-            if m:
-                size_str = m.group(1).strip()
-                print(f"  サイズ取得(テキスト): {size_str}")
-
-        # パターン3: T/B/W/H が直接ページに存在する場合（ラベルなし）
-        if not size_str:
-            m = re.search(
-                r'(T\d{2,3}\s+B\d{2,3}\([A-Z]+\)\s+W\d{2,3}\s+H\d{2,3})',
-                html
-            )
-            if m:
-                size_str = m.group(1).strip()
-                print(f"  サイズ取得(パターン): {size_str}")
-
-    except Exception as e:
-        print(f"  ページ取得失敗: {e}")
-
-    # ── フォールバック: APIのタイトルを名前に使用 ──
+    # ── Step1: 名前は API の item["title"] を優先 ──
+    # APIのタイトルには正確な出演者名が入っている
+    name = item.get("title", "").strip()
     if not name:
-        name = item.get("title", "").strip()
-        if not name:
-            ii = item.get("iteminfo", {})
-            actresses = [a.get("name") for a in ii.get("actress", []) if a.get("name")]
-            name = actresses[0] if actresses else "不明"
-        print(f"  名前フォールバック(API): {name}")
+        ii = item.get("iteminfo", {})
+        actresses = [a.get("name") for a in ii.get("actress", []) if a.get("name")]
+        name = actresses[0] if actresses else "不明"
+    print(f"  名前(APIタイトル): {name}")
+
+    # ── Step2: iteminfo.actress にサイズが入っている場合はそれを使う ──
+    size_str = None
+    ii = item.get("iteminfo", {})
+    if ii.get("actress"):
+        a = ii["actress"][0]
+        height = str(a.get("height", "")).strip()
+        bust   = str(a.get("bust",   "")).strip()
+        cup    = str(a.get("cup",    "")).strip()
+        waist  = str(a.get("waist",  "")).strip()
+        hip    = str(a.get("hip",    "")).strip()
+        print(f"  iteminfo.actress[0]: height={height} bust={bust} cup={cup} waist={waist} hip={hip}")
+        if height and bust and cup and waist and hip:
+            size_str = f"T{height} B{bust}({cup}) W{waist} H{hip}"
+            print(f"  サイズ(iteminfo): {size_str}")
+
+    # ── Step3: ActressSearch API でサイズを検索 ──
+    if not size_str:
+        size_str = search_actress_measurements(name, API_ID, AFF_ID)
+
+    # ── Step4: 名前に含まれる年齢付き別名でも検索 ──
+    # 例: "キミカ(27)" → "キミカ" で再検索
+    if not size_str:
+        base_name = re.sub(r'\(\d+\)', '', name).strip()
+        if base_name != name:
+            print(f"  年齢除去で再検索: {base_name}")
+            size_str = search_actress_measurements(base_name, API_ID, AFF_ID)
 
     # ── タイトルを組み立て ──
-    if size_str:
-        result = f"{name} {size_str}"
-    else:
-        # サイズが取れなかった場合は個別フィールドから再構成
-        h, b, c, w, hp = _parse_sizes_from_html(html) if 'html' in dir() else (None,)*5
-        size_parts = []
-        if h: size_parts.append(f"T{h}")
-        if b and c: size_parts.append(f"B{b}({c})")
-        elif b: size_parts.append(f"B{b}")
-        if w: size_parts.append(f"W{w}")
-        if hp: size_parts.append(f"H{hp}")
-        result = f"{name} {' '.join(size_parts)}" if size_parts else name
-
+    result = f"{name} {size_str}" if size_str else name
     print(f"  生成タイトル: {result}")
     return result
 
