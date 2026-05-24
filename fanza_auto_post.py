@@ -394,56 +394,115 @@ def fetch_name_and_size_from_detail_page(url, item):
             size_str = f"T{height} B{bust}({cup}) W{waist} H{hip}"
             print(f"  サイズ(iteminfo): {size_str}")
 
-    # ── Step2b: APIのテキストフィールドからサイズ・年齢を抽出 ──
-    # 素人動画はActressSearchにサイズ登録がないことが多いため、
-    # comment/description/story/title フィールドから直接抽出する
     SIZE_PATTERN = re.compile(
         r'T(\d{2,3})\s*B(\d{2,3})\(([A-Z]{1,2})\)\s*W(\d{2,3})\s*H(\d{2,3})'
     )
-    AGE_PATTERN = re.compile(r'(?:年齢[：:　]?\s*|（)(\d{1,2})(?:歳|）|\((\d{1,2})\))')
+    AGE_PATTERN = re.compile(r'(?:年齢[：:　]?\s*|（)(\d{1,2})(?:歳|）)|\((\d{1,2})\)')
 
-    text_age = None
-    text_fields = []
-    for key in ("comment", "description", "story", "title"):
-        val = item.get(key) or ""
-        if val:
-            text_fields.append(val)
-    # iteminfo内のフィールドも確認
-    for key in ("comment", "description", "story"):
-        val = ii.get(key) or ""
-        if val:
-            text_fields.append(val)
+    page_age = None
 
-    for text in text_fields:
-        if not size_str:
-            m = SIZE_PATTERN.search(text)
-            if m:
-                size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
-                print(f"  サイズ(テキスト抽出): {size_str}")
-        if text_age is None:
-            m = AGE_PATTERN.search(text)
-            if m:
-                raw_age = int(m.group(1) or m.group(2))
-                if 18 <= raw_age <= 60:
-                    text_age = raw_age
-                    print(f"  年齢(テキスト抽出): {text_age}")
-        if size_str and text_age is not None:
-            break
+    # ── Step2b: www.dmm.co.jp の静的HTMLページからサイズ・年齢を取得 ──
+    # video.dmm.co.jp はJS SPAなので、コンテンツIDから www.dmm.co.jp URLを構築して取得する
+    cid = _extract_content_id(url)
+    if cid:
+        dmm_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
+        print(f"  取得URL(static): {dmm_url}")
+        try:
+            html = _fetch_html(dmm_url)
+
+            # ページタイトル・og:title から 名前(年齢)T...B... パターンを探す
+            for title_text in re.findall(
+                r'<title[^>]*>([^<]+)</title>|<meta[^>]+(?:og:title|name=["\']title["\'])[^>]+content=["\']([^"\']+)["\']',
+                html, re.IGNORECASE
+            ):
+                t = (title_text[0] or title_text[1]).strip()
+                if not t:
+                    continue
+                print(f"  ページタイトル候補: {t}")
+                # 名前(年齢)T158 B82(B) W59 H86 形式
+                fm = re.search(
+                    r'(.{1,20}?)\((\d{1,2})\)\s*(T\d{2,3}\s*B\d{2,3}\([A-Z]{1,2}\)\s*W\d{2,3}\s*H\d{2,3})',
+                    t
+                )
+                if fm:
+                    page_name = fm.group(1).strip()
+                    page_age  = int(fm.group(2))
+                    sm = SIZE_PATTERN.search(fm.group(3))
+                    if sm and not size_str:
+                        size_str = f"T{sm.group(1)} B{sm.group(2)}({sm.group(3)}) W{sm.group(4)} H{sm.group(5)}"
+                    # ページから取得した名前をベース名として採用
+                    if page_name and not re.search(r'[ａ-ｚＡ-Ｚ0-9]', page_name):
+                        base_name = page_name
+                        name = page_name
+                    print(f"  ページから抽出: name={page_name}, age={page_age}, size={size_str}")
+                    break
+                # サイズだけ取れる場合
+                if not size_str:
+                    sm = SIZE_PATTERN.search(t)
+                    if sm:
+                        size_str = f"T{sm.group(1)} B{sm.group(2)}({sm.group(3)}) W{sm.group(4)} H{sm.group(5)}"
+                        print(f"  サイズ(ページタイトル): {size_str}")
+
+            # テーブルやフリーテキストからも探す
+            if not size_str:
+                h, b, c, w, hip_v = _parse_sizes_from_html(html)
+                if h and b and c and w and hip_v:
+                    size_str = f"T{h} B{b}({c}) W{w} H{hip_v}"
+                    print(f"  サイズ(HTMLパース): {size_str}")
+
+            if page_age is None:
+                am = AGE_PATTERN.search(html[:5000])  # ページ冒頭5000文字だけ
+                if am:
+                    raw = int(am.group(1) or am.group(2))
+                    if 18 <= raw <= 60:
+                        page_age = raw
+                        print(f"  年齢(HTML): {page_age}")
+
+        except Exception as e:
+            print(f"  静的ページ取得失敗: {e}")
+
+    # ── Step2c: APIのテキストフィールドからもサイズ・年齢を抽出 ──
+    api_text_age = None
+    if not size_str or page_age is None:
+        text_fields = []
+        for key in ("comment", "description", "story"):
+            val = item.get(key) or ""
+            if val:
+                text_fields.append(val)
+        for key in ("comment", "description", "story"):
+            val = ii.get(key) or ""
+            if val:
+                text_fields.append(val)
+        for text in text_fields:
+            if not size_str:
+                m = SIZE_PATTERN.search(text)
+                if m:
+                    size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
+                    print(f"  サイズ(APIテキスト): {size_str}")
+            if api_text_age is None:
+                m = AGE_PATTERN.search(text)
+                if m:
+                    raw = int(m.group(1) or m.group(2))
+                    if 18 <= raw <= 60:
+                        api_text_age = raw
+                        print(f"  年齢(APIテキスト): {api_text_age}")
+            if size_str and api_text_age is not None:
+                break
 
     # ── Step3: ActressSearch API でプロフィール（サイズ＋年齢）を検索 ──
     # サイズが既にあっても年齢取得のために常に検索する
-    api_age = None
+    actress_api_age = None
     for candidate in search_candidates:
         profile = search_actress_profile(candidate, API_ID, AFF_ID)
         if profile:
-            api_age = profile.get("age")
+            actress_api_age = profile.get("age")
             if not size_str:
                 size_str = profile.get("size_str")
-            print(f"  ActressSearch「{candidate}」→ age={api_age}, size_str={size_str}")
-            break  # 見つかったら終了
+            print(f"  ActressSearch「{candidate}」→ age={actress_api_age}, size_str={size_str}")
+            break
 
-    # 年齢はActressSearch優先、なければテキスト抽出値を使用
-    age = api_age if api_age is not None else text_age
+    # 年齢の優先順位: ページHTML > APIテキスト > ActressSearch
+    age = page_age if page_age is not None else (actress_api_age if actress_api_age is not None else api_text_age)
 
     # ── Step4: 年齢を名前に付加 ──
     # すでに "みなみ(21)" 形式なら age は付けない（二重にならないよう）
