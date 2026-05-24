@@ -151,6 +151,84 @@ def contains_jukujo(item):
     return "熟女" in genres
 
 # ──────────────────────────────────────────
+# Playwrightで JS描画ページからサイズ・年齢を取得
+# ──────────────────────────────────────────
+
+SIZE_PAT = re.compile(r'T(\d{2,3})\s*B(\d{2,3})\(([A-Z]{1,2})\)\s*W(\d{2,3})\s*H(\d{2,3})')
+
+def fetch_content_data_playwright(content_id):
+    """
+    Playwright（headless Chromium）で video.dmm.co.jp を描画し、
+    出演者のサイズ・年齢を取得する。
+    戻り値: {"size_str": "T158 B87(G) W58 H85", "age": 27} or None
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        url = f"https://video.dmm.co.jp/amateur/content/?id={content_id}"
+        print(f"  Playwright起動: {url}")
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                locale="ja-JP",
+                extra_http_headers={"Accept-Language": "ja-JP,ja;q=0.9"},
+            )
+            # 年齢認証クッキーを事前設定
+            context.add_cookies([
+                {"name": "ckcy",  "value": "1",  "domain": ".dmm.co.jp", "path": "/"},
+                {"name": "cklg",  "value": "ja", "domain": ".dmm.co.jp", "path": "/"},
+                {"name": "ckcy",  "value": "1",  "domain": ".dmm.com",   "path": "/"},
+            ])
+            page = context.new_page()
+
+            # 年齢認証が出た場合に備えて www.dmm.co.jp で先に確認
+            try:
+                page.goto("https://www.dmm.co.jp/", timeout=15000, wait_until="domcontentloaded")
+                btn = page.locator("a:has-text('18歳以上'), button:has-text('18歳以上'), input[value*='18歳']").first
+                if btn.is_visible(timeout=3000):
+                    btn.click()
+                    page.wait_for_load_state("domcontentloaded", timeout=5000)
+            except Exception:
+                pass  # 年齢認証なし or タイムアウトは無視して続行
+
+            # コンテンツページへ移動し、JS描画完了まで待機
+            page.goto(url, timeout=30000, wait_until="networkidle")
+            html = page.content()
+            browser.close()
+
+        print(f"  Playwrightページサイズ: {len(html)} bytes")
+
+        # ── サイズ抽出 ──
+        m = SIZE_PAT.search(html)
+        if not m:
+            print("  Playwright: サイズパターンなし")
+            return None
+        size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
+
+        # ── 年齢抽出（サイズ前後の文脈から (数字) を検索）──
+        age = None
+        ctx_start = max(0, m.start() - 120)
+        ctx = html[ctx_start: m.end() + 30]
+        age_m = re.search(r'\((\d{1,2})\)', ctx)
+        if age_m:
+            raw = int(age_m.group(1))
+            if 18 <= raw <= 60:
+                age = raw
+
+        print(f"  Playwright結果: size_str={size_str}, age={age}")
+        return {"size_str": size_str, "age": age}
+
+    except Exception as e:
+        print(f"  Playwright失敗: {e}")
+        return None
+
+
+# ──────────────────────────────────────────
 # タイトル生成（名前 + サイズ）
 # ──────────────────────────────────────────
 
@@ -209,28 +287,16 @@ def build_title(item):
             if size_str and age is not None:
                 break
 
-    # ── Step 5: item["comment"] フィールドからサイズ・年齢を抽出 ──
-    # 素人動画はActressSearchに未登録のことが多いため、
-    # commentフィールドに "キミカ(27) T158 B87(G) W58 H85" 形式で含まれることがある
-    if not size_str or age is None:
-        SIZE_PAT = re.compile(r'T(\d{2,3})\s*B(\d{2,3})\(([A-Z]{1,2})\)\s*W(\d{2,3})\s*H(\d{2,3})')
-        AGE_PAT  = re.compile(r'\((\d{1,2})\)')
-        comment = item.get("comment", "") or ""
-        print(f"  comment冒頭: {comment[:150]}")
-        if comment:
-            if not size_str:
-                m = SIZE_PAT.search(comment)
-                if m:
-                    size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
-                    print(f"  サイズ(comment): {size_str}")
-            if age is None:
-                # コメント冒頭 "名前(年齢) ..." の (年齢) を取得
-                m = AGE_PAT.search(comment[:80])
-                if m:
-                    raw = int(m.group(1))
-                    if 18 <= raw <= 60:
-                        age = raw
-                        print(f"  年齢(comment): {age}")
+    # ── Step 4: Playwright で video.dmm.co.jp を描画してサイズ・年齢を取得 ──
+    # videoc APIはサイズ・年齢を返さないため、JSレンダリングが必要
+    if not size_str:
+        content_id = item.get("content_id") or item.get("product_id")
+        if content_id:
+            pw_data = fetch_content_data_playwright(content_id)
+            if pw_data:
+                size_str = pw_data.get("size_str")
+                if age is None:
+                    age = pw_data.get("age")
 
     # ── 名前に年齢を付加 ──
     has_age = bool(re.search(r'\(\d+\)', name))
