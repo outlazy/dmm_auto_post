@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: '0 */4 * * *'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   auto_post:
     runs-on: ubuntu-latest
@@ -29,6 +32,11 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Install Playwright and Chromium
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps
 
       - name: Show python-wordpress-xmlrpc version
         run: pip show python-wordpress-xmlrpc
