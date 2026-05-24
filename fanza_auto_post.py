@@ -124,27 +124,55 @@ def search_actress_profile(name, api_id, aff_id):
         print(f"  ActressSearch失敗: {e}")
     return None
 
-def fetch_size_from_product_page(url):
-    """商品ページのHTMLから「T152 B82(B) W54 H80」形式のサイズを取得する。"""
-    try:
-        resp = requests.get(url, timeout=10, allow_redirects=True)
-        print(f"  商品ページ取得: {resp.url} (status={resp.status_code})")
-        html = resp.text
-        # HTMLタグ・エンティティを除去してプレーンテキスト化
-        text = re.sub(r'<[^>]+>', ' ', html)
-        text = re.sub(r'&nbsp;', ' ', text)
-        text = re.sub(r'[　\xa0]', ' ', text)  # 全角スペース等
-        text = re.sub(r'\s+', ' ', text)
-        # 「T152 B82(B) W54 H80」パターンを検索
-        m = re.search(r'T(\d+)\s*B(\d+)\(([A-Za-z]+)\)\s*W(\d+)\s*H(\d+)', text)
-        if m:
-            size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
-            print(f"  サイズ(商品ページ): {size_str}")
-            return size_str
-        else:
-            print(f"  商品ページにサイズ情報なし（パターン不一致）")
-    except Exception as e:
-        print(f"  商品ページサイズ取得失敗: {e}")
+def fetch_size_from_product_page(item):
+    """
+    www.dmm.co.jp の商品詳細HTMLからサイズを取得する。
+    content_id → www.dmm.co.jp/digital/videoc/-/detail/ を優先し、
+    age_checkリダイレクト時はクッキーで回避する。
+    """
+    from urllib.parse import urlparse, parse_qs, unquote
+
+    content_id = item.get("content_id") or item.get("product_id")
+    urls_to_try = []
+    if content_id:
+        urls_to_try.append(f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={content_id}/")
+    urls_to_try.append(item.get("URL", ""))
+
+    session = requests.Session()
+    session.cookies.set("age_check_done", "1", domain=".dmm.co.jp")
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    })
+
+    for url in urls_to_try:
+        if not url:
+            continue
+        try:
+            resp = session.get(url, timeout=10, allow_redirects=True)
+            print(f"  商品ページ取得: {resp.url} (status={resp.status_code})")
+
+            # age_checkにリダイレクトされた場合はrurlから実URLを再取得
+            if "age_check" in resp.url:
+                qs = parse_qs(urlparse(resp.url).query)
+                rurl = qs.get("rurl", [None])[0]
+                if rurl:
+                    resp = session.get(unquote(rurl), timeout=10, allow_redirects=True)
+                    print(f"  age_check後: {resp.url} (status={resp.status_code})")
+
+            html = resp.text
+            text = re.sub(r'<[^>]+>', ' ', html)
+            text = re.sub(r'&nbsp;', ' ', text)
+            text = re.sub(r'[　\xa0]', ' ', text)
+            text = re.sub(r'\s+', ' ', text)
+            m = re.search(r'T(\d+)\s*B(\d+)\(([A-Za-z]+)\)\s*W(\d+)\s*H(\d+)', text)
+            if m:
+                size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
+                print(f"  サイズ(商品ページ): {size_str}")
+                return size_str
+            else:
+                print(f"  サイズ情報なし（パターン不一致）")
+        except Exception as e:
+            print(f"  商品ページサイズ取得失敗: {e}")
     return None
 
 def build_title(item):
@@ -184,7 +212,7 @@ def build_title(item):
 
     # Step 3: 商品ページから直接スクレイピング
     if not size_str:
-        size_str = fetch_size_from_product_page(item.get("URL", ""))
+        size_str = fetch_size_from_product_page(item)
 
     # Step 4: ActressSearch API
     if not size_str:
