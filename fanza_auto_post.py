@@ -168,7 +168,10 @@ def fetch_content_data_playwright(content_id):
         print(f"  Playwright起動: {url}")
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            )
             context = browser.new_context(
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -176,46 +179,60 @@ def fetch_content_data_playwright(content_id):
                     "Chrome/124.0.0.0 Safari/537.36"
                 ),
                 locale="ja-JP",
-                extra_http_headers={"Accept-Language": "ja-JP,ja;q=0.9"},
+                extra_http_headers={"Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8"},
             )
-            context.add_cookies([
-                {"name": "ckcy", "value": "1",  "domain": ".dmm.co.jp", "path": "/"},
-                {"name": "cklg", "value": "ja", "domain": ".dmm.co.jp", "path": "/"},
-                {"name": "ckcy", "value": "1",  "domain": ".dmm.com",   "path": "/"},
-            ])
             page = context.new_page()
 
-            # www.dmm.co.jp にアクセスしてJSで年齢認証クッキーをセット
+            # ── Step1: www.dmm.co.jp でJSクッキーをセット ──
             try:
-                page.goto("https://www.dmm.co.jp/digital/videoc/", timeout=15000, wait_until="domcontentloaded")
-                page.evaluate("""
-                    document.cookie = 'ckcy=1; domain=.dmm.co.jp; path=/; max-age=31536000';
-                    document.cookie = 'cklg=ja; domain=.dmm.co.jp; path=/; max-age=31536000';
-                    document.cookie = 'ckcy=1; domain=.dmm.com; path=/; max-age=31536000';
-                """)
+                page.goto("https://www.dmm.co.jp/", timeout=20000, wait_until="domcontentloaded")
+                page.evaluate("""() => {
+                    const d = '.dmm.co.jp';
+                    const opts = `; domain=${d}; path=/; max-age=31536000`;
+                    document.cookie = 'ckcy=1' + opts;
+                    document.cookie = 'cklg=ja' + opts;
+                    document.cookie = 'age_check_done=1' + opts;
+                }""")
+                # 年齢認証ボタンがあればクリック
+                for sel in ["text=18歳以上", "text=はい", "[href*='age_check']", "button[type='submit']"]:
+                    try:
+                        loc = page.locator(sel).first
+                        if loc.is_visible(timeout=2000):
+                            loc.click()
+                            page.wait_for_load_state("domcontentloaded", timeout=5000)
+                            break
+                    except Exception:
+                        continue
             except Exception as e:
-                print(f"  年齢認証事前セット失敗（続行）: {e}")
+                print(f"  www.dmm.co.jp準備失敗（続行）: {e}")
 
-            # コンテンツページに移動
+            # ── Step2: コンテンツページへ移動 ──
             page.goto(url, timeout=30000, wait_until="networkidle")
-            # JS描画完了を少し待つ
             try:
-                page.wait_for_selector("h1, [class*='title'], [class*='performer']", timeout=8000)
+                page.wait_for_timeout(2000)  # JS描画の追加待機
             except Exception:
                 pass
             html = page.content()
+            print(f"  Playwrightページサイズ: {len(html)} bytes")
+            print(f"  HTML冒頭300文字: {html[:300].replace(chr(10), ' ')}")
 
-            # デバッグ: 最初の500文字を表示（年齢認証ページかどうか確認）
-            print(f"  HTML冒頭: {html[:300].replace(chr(10),' ')}")
+            # ── Step3: __NEXT_DATA__ から JSON でデータ取得 ──
+            next_data = None
+            nd_match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.+?)</script>', html, re.DOTALL)
+            if nd_match:
+                try:
+                    next_data = json.loads(nd_match.group(1))
+                    print("  __NEXT_DATA__ 取得成功")
+                except Exception:
+                    pass
 
-            # ── 説明文: CSSセレクタで取得 ──
+            # ── Step4: 説明文をCSSセレクタで取得 ──
             description = None
             for selector in [
                 "[class*='description']",
                 "[class*='story']",
                 "[class*='detail']",
-                "[class*='content-info']",
-                "[class*='contentsInfo']",
+                "[class*='comment']",
                 "[class*='text']",
                 "p",
             ]:
@@ -223,7 +240,7 @@ def fetch_content_data_playwright(content_id):
                     texts = page.locator(selector).all_inner_texts()
                     for t in texts:
                         t = t.strip()
-                        if len(t) > 100 and "18歳" not in t and "年齢認証" not in t:
+                        if len(t) > 80 and "18歳" not in t and "年齢認証" not in t and "cookie" not in t.lower():
                             description = t
                             break
                     if description:
@@ -233,20 +250,43 @@ def fetch_content_data_playwright(content_id):
 
             browser.close()
 
-        print(f"  Playwrightページサイズ: {len(html)} bytes")
-
         result = {}
+
+        # ── __NEXT_DATA__ から description を探す ──
+        if next_data and not description:
+            def _find_key(obj, keys):
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        if k in keys and isinstance(v, str) and len(v) > 80:
+                            return v
+                        found = _find_key(v, keys)
+                        if found:
+                            return found
+                elif isinstance(obj, list):
+                    for v in obj:
+                        found = _find_key(v, keys)
+                        if found:
+                            return found
+                return None
+            description = _find_key(next_data, ("description", "story", "comment", "body"))
 
         # ── サイズ抽出 ──
         m = SIZE_PAT.search(html)
         if m:
             result["size_str"] = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
+        elif next_data:
+            nd_str = json.dumps(next_data, ensure_ascii=False)
+            m = SIZE_PAT.search(nd_str)
+            if m:
+                result["size_str"] = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
 
         if description:
-            print(f"  説明文取得: {description[:80]}...")
-            result["description"] = description
+            desc_clean = description.strip()
+            if is_valid_description(desc_clean):
+                print(f"  説明文取得: {desc_clean[:80]}...")
+                result["description"] = desc_clean
 
-        print(f"  Playwright結果: size_str={result.get('size_str')}, desc={bool(description)}")
+        print(f"  Playwright結果: size_str={result.get('size_str')}, desc={bool(result.get('description'))}")
         return result if result else None
 
     except Exception as e:
