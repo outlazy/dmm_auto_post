@@ -197,7 +197,6 @@ def build_title(item):
     # ── Step 3 & 4: ActressSearch API ──
     if not size_str or age is None:
         base_name = re.sub(r'\(\d+\)', '', name).strip()
-        # 重複なしで候補リストを作る（base_name優先、元の名前も試す）
         candidates = list(dict.fromkeys([base_name, name]))
         for candidate in candidates:
             profile = search_actress_profile(candidate, API_ID, AFF_ID)
@@ -209,6 +208,29 @@ def build_title(item):
                 age = profile["age"]
             if size_str and age is not None:
                 break
+
+    # ── Step 5: item["comment"] フィールドからサイズ・年齢を抽出 ──
+    # 素人動画はActressSearchに未登録のことが多いため、
+    # commentフィールドに "キミカ(27) T158 B87(G) W58 H85" 形式で含まれることがある
+    if not size_str or age is None:
+        SIZE_PAT = re.compile(r'T(\d{2,3})\s*B(\d{2,3})\(([A-Z]{1,2})\)\s*W(\d{2,3})\s*H(\d{2,3})')
+        AGE_PAT  = re.compile(r'\((\d{1,2})\)')
+        comment = item.get("comment", "") or ""
+        print(f"  comment冒頭: {comment[:150]}")
+        if comment:
+            if not size_str:
+                m = SIZE_PAT.search(comment)
+                if m:
+                    size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
+                    print(f"  サイズ(comment): {size_str}")
+            if age is None:
+                # コメント冒頭 "名前(年齢) ..." の (年齢) を取得
+                m = AGE_PAT.search(comment[:80])
+                if m:
+                    raw = int(m.group(1))
+                    if 18 <= raw <= 60:
+                        age = raw
+                        print(f"  年齢(comment): {age}")
 
     # ── 名前に年齢を付加 ──
     has_age = bool(re.search(r'\(\d+\)', name))
