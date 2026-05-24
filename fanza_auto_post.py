@@ -127,14 +127,22 @@ def search_actress_profile(name, api_id, aff_id):
 def fetch_size_from_product_page(url):
     """商品ページのHTMLから「T152 B82(B) W54 H80」形式のサイズを取得する。"""
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=10, allow_redirects=True)
+        print(f"  商品ページ取得: {resp.url} (status={resp.status_code})")
         html = resp.text
-        # 「T152 B82(B) W54 H80」のような形式を検索
-        m = re.search(r'T(\d+)\s*B(\d+)\(([A-Za-z]+)\)\s*W(\d+)\s*H(\d+)', html)
+        # HTMLタグ・エンティティを除去してプレーンテキスト化
+        text = re.sub(r'<[^>]+>', ' ', html)
+        text = re.sub(r'&nbsp;', ' ', text)
+        text = re.sub(r'[　\xa0]', ' ', text)  # 全角スペース等
+        text = re.sub(r'\s+', ' ', text)
+        # 「T152 B82(B) W54 H80」パターンを検索
+        m = re.search(r'T(\d+)\s*B(\d+)\(([A-Za-z]+)\)\s*W(\d+)\s*H(\d+)', text)
         if m:
             size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
             print(f"  サイズ(商品ページ): {size_str}")
             return size_str
+        else:
+            print(f"  商品ページにサイズ情報なし（パターン不一致）")
     except Exception as e:
         print(f"  商品ページサイズ取得失敗: {e}")
     return None
