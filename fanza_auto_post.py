@@ -222,9 +222,20 @@ def fetch_content_data_playwright(content_id):
             if nd_match:
                 try:
                     next_data = json.loads(nd_match.group(1))
-                    print("  __NEXT_DATA__ 取得成功")
-                except Exception:
-                    pass
+                    nd_str = json.dumps(next_data, ensure_ascii=False)
+                    print(f"  __NEXT_DATA__ 取得成功 ({len(nd_str)} chars)")
+                    # サイズパターンが含まれるか確認
+                    if SIZE_PAT.search(nd_str):
+                        print("  → __NEXT_DATA__にサイズあり")
+                    else:
+                        print("  → __NEXT_DATA__にサイズなし")
+                    # props.pageProps 配下のキー一覧を表示
+                    pp = next_data.get("props", {}).get("pageProps", {})
+                    print(f"  pagePropsキー: {list(pp.keys())[:10]}")
+                    # 最初の1000文字を表示
+                    print(f"  __NEXT_DATA__冒頭: {nd_str[:500]}")
+                except Exception as e:
+                    print(f"  __NEXT_DATA__パース失敗: {e}")
 
             # ── Step4: 説明文をCSSセレクタで取得 ──
             description = None
