@@ -286,119 +286,68 @@ def _fetch_html(url):
 
 def fetch_name_and_size_from_detail_page(url, item):
     """
-    FANZA商品ページから女優名・身長・バスト・カップ・ウエスト・ヒップを取得し
+    FANZAのAPIデータ(item)から名前を取得し、
+    www.dmm.co.jp の通常商品ページからサイズを取得して
     "名前 T身長 Bバスト(カップ) Wウエスト Hヒップ" 形式のタイトルを返す。
     例: "せるぴこ T161 B88(E) W61 H86"
 
-    試行順:
-      1. video.dmm.co.jp/amateur/content/?id=xxx の元ページ
-      2. www.dmm.co.jp/digital/videoc/-/detail/=/cid=xxx/ の通常商品ページ
+    ※ video.dmm.co.jp/amateur/content/ は年齢認証ページが返るため使用しない。
+    名前は必ず item["title"]（APIのタイトル）を優先する。
     """
-    name = None
-    height = bust = cup = waist = hip = None
-
-    # 取得対象URLリストを構築
-    urls_to_try = [url]
-    cid = _extract_content_id(url)
-    if cid:
-        alt_url = f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/"
-        if alt_url != url:
-            urls_to_try.append(alt_url)
-    print(f"  取得対象URL: {urls_to_try}")
-
-    for try_url in urls_to_try:
-        try:
-            html = _fetch_html(try_url)
-            print(f"  HTML取得: {try_url} ({len(html)} bytes)")
-
-            # デバッグ: 全metaタグのcontentを出力
-            for mc in re.findall(r'<meta[^>]+content=["\']([^"\']{10,})["\']', html, re.IGNORECASE):
-                if any(kw in mc for kw in ["T1", "B", "W", "H", "身長", "バスト", "ウエスト", "ヒップ", "サイズ"]):
-                    print(f"  [meta] {mc[:120]}")
-
-            # ── 名前の抽出 ──
-            if not name:
-                # th/dt ラベルから
-                for label in ["名前", "出演者", "女優", "キャスト"]:
-                    m = re.search(
-                        rf'<(?:th|dt)[^>]*>\s*{label}\s*</(?:th|dt)>\s*<(?:td|dd)[^>]*>(.*?)</(?:td|dd)>',
-                        html, re.DOTALL | re.IGNORECASE
-                    )
-                    if m:
-                        candidate = _strip_tags(m.group(1))
-                        if candidate:
-                            name = candidate
-                            break
-
-            if not name:
-                # JSON-LD actor/performer
-                for m_script in re.finditer(
-                    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-                    html, re.DOTALL
-                ):
-                    try:
-                        jd = json.loads(m_script.group(1))
-                        for key in ("actor", "performer"):
-                            actors = jd.get(key, [])
-                            if isinstance(actors, dict): actors = [actors]
-                            if isinstance(actors, list) and actors:
-                                n = actors[0].get("name", "")
-                                if n:
-                                    name = n
-                                    break
-                        if name: break
-                    except Exception:
-                        pass
-
-            if not name:
-                # og:title や title タグから推測（サイズ表記を含む場合はそのまま使う）
-                m = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
-                if not m:
-                    m = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
-                if m:
-                    og_title = m.group(1).strip()
-                    # "せるぴこ T161 B88(E) W61 H86" がそのままタイトルに含まれている場合
-                    size_in_title = re.search(
-                        r'T(\d{2,3})\s*B(\d{2,3})\(([A-Z]{1,2})\)\s*W(\d{2,3})\s*H(\d{2,3})',
-                        og_title
-                    )
-                    if size_in_title:
-                        height = size_in_title.group(1)
-                        bust   = size_in_title.group(2)
-                        cup    = size_in_title.group(3)
-                        waist  = size_in_title.group(4)
-                        hip    = size_in_title.group(5)
-                        # タイトルから名前部分を切り出し
-                        name_part = og_title[:size_in_title.start()].strip()
-                        if name_part:
-                            name = name_part
-                    elif not name and len(og_title) <= 30:
-                        name = og_title
-
-            # ── サイズの抽出 ──
-            if not (height and bust and cup and waist and hip):
-                h, b, c, w, hp = _parse_sizes_from_html(html)
-                height = height or h
-                bust   = bust   or b
-                cup    = cup    or c
-                waist  = waist  or w
-                hip    = hip    or hp
-
-            print(f"  [{try_url}] 名前:{name} T:{height} B:{bust} C:{cup} W:{waist} H:{hip}")
-
-            # 全項目揃ったら終了
-            if name and height and bust and cup and waist and hip:
-                break
-
-        except Exception as e:
-            print(f"  取得失敗: {try_url} ({e})")
-            continue
-
-    # ── APIデータでフォールバック ──
+    # ── 名前: APIのタイトルを最優先 ──
+    # item["title"] にはすでに正確な出演者名が入っている（例: "せるぴこ", "かほ"）
+    name = item.get("title", "").strip()
     if not name:
         ii = item.get("iteminfo", {})
         actresses = [a.get("name") for a in ii.get("actress", []) if a.get("name")]
-        name = actresses[0] if actresses else item.get("title", "不明")
+        name = actresses[0] if actresses else "不明"
+    print(f"  API名前: {name}")
+
+    # ── サイズ: www.dmm.co.jp の通常商品ページから取得 ──
+    height = bust = cup = waist = hip = None
+    cid = _extract_content_id(url)
+    size_urls = []
+    if cid:
+        # videoc（素人動画）の通常商品ページ
+        size_urls.append(f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/")
+        # digital全般のフォールバック
+        size_urls.append(f"https://www.dmm.co.jp/digital/-/detail/=/cid={cid}/")
+    print(f"  サイズ取得URL候補: {size_urls}")
+
+    for try_url in size_urls:
+        try:
+            html = _fetch_html(try_url)
+
+            # 年齢認証ページ・エラーページを検出してスキップ
+            if any(ng in html for ng in ["年齢認証", "18歳未満", "agecheck", "age_check", "adult_check"]):
+                print(f"  年齢認証ページ検出: {try_url} → スキップ")
+                continue
+            if len(html) < 3000:
+                print(f"  HTMLが短すぎる({len(html)}bytes): {try_url} → スキップ")
+                continue
+
+            print(f"  HTML取得OK: {try_url} ({len(html)} bytes)")
+
+            # デバッグ: サイズ関連のmetaタグを出力
+            for mc in re.findall(r'<meta[^>]+content=["\']([^"\']{5,})["\']', html, re.IGNORECASE):
+                if any(kw in mc for kw in ["T1", "身長", "バスト", "ウエスト", "ヒップ", "サイズ"]):
+                    print(f"  [meta] {mc[:120]}")
+
+            h, b, c, w, hp = _parse_sizes_from_html(html)
+            height = height or h
+            bust   = bust   or b
+            cup    = cup    or c
+            waist  = waist  or w
+            hip    = hip    or hp
+
+            print(f"  サイズ取得結果: T:{height} B:{bust} C:{cup} W:{waist} H:{hip}")
+
+            if height and bust and cup and waist and hip:
+                break
+
+        except Exception as e:
+            print(f"  サイズ取得失敗: {try_url} ({e})")
+            continue
 
     # ── タイトルを組み立て ──
     size_parts = []
