@@ -286,83 +286,132 @@ def _fetch_html(url):
 
 def fetch_name_and_size_from_detail_page(url, item):
     """
-    FANZAのAPIデータ(item)から名前を取得し、
-    www.dmm.co.jp の通常商品ページからサイズを取得して
-    "名前 T身長 Bバスト(カップ) Wウエスト Hヒップ" 形式のタイトルを返す。
-    例: "せるぴこ T161 B88(E) W61 H86"
+    video.dmm.co.jp/amateur/content/ ページから「名前」「サイズ」を取得し
+    "キミカ(27) T158 B87(G) W58 H85" 形式のタイトルを返す。
 
-    ※ video.dmm.co.jp/amateur/content/ は年齢認証ページが返るため使用しない。
-    名前は必ず item["title"]（APIのタイトル）を優先する。
+    ページは年齢認証Cookie(ckcy=1)を付与してアクセスする。
+    取得できなかった場合は item["title"] のみを使用。
     """
-    # ── 名前: APIのタイトルを最優先 ──
-    # item["title"] にはすでに正確な出演者名が入っている（例: "せるぴこ", "かほ"）
-    name = item.get("title", "").strip()
-    if not name:
-        ii = item.get("iteminfo", {})
-        actresses = [a.get("name") for a in ii.get("actress", []) if a.get("name")]
-        name = actresses[0] if actresses else "不明"
-    print(f"  API名前: {name}")
+    # DMM年齢認証bypass Cookie
+    AGE_COOKIES = "ckcy=1; cklg=1; age_check_done=1"
 
-    # ── サイズ: www.dmm.co.jp の通常商品ページから取得 ──
-    height = bust = cup = waist = hip = None
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Cookie": AGE_COOKIES,
+    }
+
+    name = None
+    size_str = None
+
+    # ── video.dmm.co.jp/amateur/content/ から名前・サイズを取得 ──
+    # アフィリエイトIDなしのクリーンURLで取得
     cid = _extract_content_id(url)
-    size_urls = []
-    if cid:
-        # videoc（素人動画）の通常商品ページ
-        size_urls.append(f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={cid}/")
-        # digital全般のフォールバック
-        size_urls.append(f"https://www.dmm.co.jp/digital/-/detail/=/cid={cid}/")
-    print(f"  サイズ取得URL候補: {size_urls}")
+    clean_url = f"https://video.dmm.co.jp/amateur/content/?id={cid}" if cid else url
 
-    for try_url in size_urls:
-        try:
-            html = _fetch_html(try_url)
+    try:
+        r = requests.get(clean_url, headers=headers, timeout=15, allow_redirects=True)
+        html = r.text
+        print(f"  ページ取得: {clean_url} ({len(html)} bytes, status={r.status_code})")
 
-            # 年齢認証ページ・エラーページを検出してスキップ
-            if any(ng in html for ng in ["年齢認証", "18歳未満", "agecheck", "age_check", "adult_check"]):
-                print(f"  年齢認証ページ検出: {try_url} → スキップ")
-                continue
-            if len(html) < 3000:
-                print(f"  HTMLが短すぎる({len(html)}bytes): {try_url} → スキップ")
-                continue
+        # 年齢認証ページか確認
+        if "年齢認証" in html[:3000] or r.status_code in (301, 302, 403):
+            print(f"  年齢認証ページまたはリダイレクト → Cookieでリトライ")
+            # Cookieをセッションで送り直す
+            session = requests.Session()
+            session.headers.update(headers)
+            # 年齢認証ページを一度踏んでCookieをセット
+            session.get("https://www.dmm.co.jp/age_check/=/declared=yes/", timeout=10)
+            r = session.get(clean_url, timeout=15)
+            html = r.text
+            print(f"  リトライ後: ({len(html)} bytes, status={r.status_code})")
 
-            print(f"  HTML取得OK: {try_url} ({len(html)} bytes)")
+        # デバッグ: 名前・サイズ周辺のHTML断片を表示
+        for kw in ["名前", "サイズ", "キミカ", "T1", "B8", "W5", "H8"]:
+            idx = html.find(kw)
+            if idx != -1:
+                print(f"  [{kw}] → {html[max(0,idx-30):idx+80].strip()!r}")
 
-            # デバッグ: サイズ関連のmetaタグを出力
-            for mc in re.findall(r'<meta[^>]+content=["\']([^"\']{5,})["\']', html, re.IGNORECASE):
-                if any(kw in mc for kw in ["T1", "身長", "バスト", "ウエスト", "ヒップ", "サイズ"]):
-                    print(f"  [meta] {mc[:120]}")
+        # ── 名前の抽出 ──
+        # パターン1: <th>名前</th><td>キミカ(27)</td>
+        for label in ["名前", "出演者", "女優"]:
+            m = re.search(
+                rf'<(?:th|dt)[^>]*>\s*{label}\s*</(?:th|dt)>\s*<(?:td|dd)[^>]*>(.*?)</(?:td|dd)>',
+                html, re.DOTALL | re.IGNORECASE
+            )
+            if m:
+                candidate = _strip_tags(m.group(1)).strip()
+                if candidate and "認証" not in candidate:
+                    name = candidate
+                    print(f"  名前取得(テーブル): {name}")
+                    break
 
-            h, b, c, w, hp = _parse_sizes_from_html(html)
-            height = height or h
-            bust   = bust   or b
-            cup    = cup    or c
-            waist  = waist  or w
-            hip    = hip    or hp
+        # パターン2: "名前" の直後のテキスト
+        if not name:
+            m = re.search(r'名前[^\w]*([^\s<]{2,20}(?:\(\d+\))?)', html)
+            if m:
+                candidate = m.group(1).strip()
+                if candidate and "認証" not in candidate:
+                    name = candidate
+                    print(f"  名前取得(テキスト): {name}")
 
-            print(f"  サイズ取得結果: T:{height} B:{bust} C:{cup} W:{waist} H:{hip}")
+        # ── サイズの抽出 ──
+        # パターン1: <th>サイズ</th><td>T158 B87(G) W58 H85</td>
+        m = re.search(
+            r'<(?:th|dt)[^>]*>\s*サイズ\s*</(?:th|dt)>\s*<(?:td|dd)[^>]*>(.*?)</(?:td|dd)>',
+            html, re.DOTALL | re.IGNORECASE
+        )
+        if m:
+            size_str = _strip_tags(m.group(1)).strip()
+            print(f"  サイズ取得(テーブル): {size_str}")
 
-            if height and bust and cup and waist and hip:
-                break
+        # パターン2: "サイズ" の直後に T/B/W/H 形式
+        if not size_str:
+            m = re.search(
+                r'サイズ[^\w]*(T\d{2,3}\s+B\d{2,3}\([A-Z]+\)\s+W\d{2,3}\s+H\d{2,3})',
+                html
+            )
+            if m:
+                size_str = m.group(1).strip()
+                print(f"  サイズ取得(テキスト): {size_str}")
 
-        except Exception as e:
-            print(f"  サイズ取得失敗: {try_url} ({e})")
-            continue
+        # パターン3: T/B/W/H が直接ページに存在する場合（ラベルなし）
+        if not size_str:
+            m = re.search(
+                r'(T\d{2,3}\s+B\d{2,3}\([A-Z]+\)\s+W\d{2,3}\s+H\d{2,3})',
+                html
+            )
+            if m:
+                size_str = m.group(1).strip()
+                print(f"  サイズ取得(パターン): {size_str}")
+
+    except Exception as e:
+        print(f"  ページ取得失敗: {e}")
+
+    # ── フォールバック: APIのタイトルを名前に使用 ──
+    if not name:
+        name = item.get("title", "").strip()
+        if not name:
+            ii = item.get("iteminfo", {})
+            actresses = [a.get("name") for a in ii.get("actress", []) if a.get("name")]
+            name = actresses[0] if actresses else "不明"
+        print(f"  名前フォールバック(API): {name}")
 
     # ── タイトルを組み立て ──
-    size_parts = []
-    if height:
-        size_parts.append(f"T{height}")
-    if bust and cup:
-        size_parts.append(f"B{bust}({cup})")
-    elif bust:
-        size_parts.append(f"B{bust}")
-    if waist:
-        size_parts.append(f"W{waist}")
-    if hip:
-        size_parts.append(f"H{hip}")
+    if size_str:
+        result = f"{name} {size_str}"
+    else:
+        # サイズが取れなかった場合は個別フィールドから再構成
+        h, b, c, w, hp = _parse_sizes_from_html(html) if 'html' in dir() else (None,)*5
+        size_parts = []
+        if h: size_parts.append(f"T{h}")
+        if b and c: size_parts.append(f"B{b}({c})")
+        elif b: size_parts.append(f"B{b}")
+        if w: size_parts.append(f"W{w}")
+        if hp: size_parts.append(f"H{hp}")
+        result = f"{name} {' '.join(size_parts)}" if size_parts else name
 
-    result = f"{name} {' '.join(size_parts)}" if size_parts else name
     print(f"  生成タイトル: {result}")
     return result
 
