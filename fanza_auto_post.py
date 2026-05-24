@@ -298,13 +298,8 @@ def build_title(item):
                 if age is None:
                     age = pw_data.get("age")
 
-    # ── 名前に年齢を付加 ──
-    has_age = bool(re.search(r'\(\d+\)', name))
-    base_name = re.sub(r'\(\d+\)', '', name).strip()
-    if not has_age and age is not None:
-        display_name = f"{base_name}({age})"
-    else:
-        display_name = name  # 元々 "キミカ(27)" 形式ならそのまま
+    # ── タイトル: 名前 + サイズ（年齢は含めない）──
+    display_name = re.sub(r'\(\d+\)', '', name).strip()  # 名前に年齢が混入していれば除去
 
     result = f"{display_name} {size_str}" if size_str else display_name
     print(f"  生成タイトル: {result}")
