@@ -126,17 +126,25 @@ def search_actress_profile(name, api_id, aff_id):
 
 def fetch_size_from_product_page(item):
     """
-    www.dmm.co.jp の商品詳細HTMLからサイズを取得する。
-    content_id → www.dmm.co.jp/digital/videoc/-/detail/ を優先し、
-    age_checkリダイレクト時はクッキーで回避する。
+    video.dmm.co.jp の __NEXT_DATA__ JSON からサイズを取得する。
+    age_check_done クッキーで年齢確認をスキップ。
     """
     from urllib.parse import urlparse, parse_qs, unquote
 
     content_id = item.get("content_id") or item.get("product_id")
-    urls_to_try = []
-    if content_id:
-        urls_to_try.append(f"https://www.dmm.co.jp/digital/videoc/-/detail/=/cid={content_id}/")
-    urls_to_try.append(item.get("URL", ""))
+    # URLのid=パラメータからも取得
+    if not content_id:
+        raw_url = item.get("URL", "")
+        try:
+            m = re.search(r'[?&]id=([^&]+)', raw_url)
+            if m:
+                content_id = m.group(1)
+        except Exception:
+            pass
+
+    target_url = f"https://video.dmm.co.jp/amateur/content/?id={content_id}" if content_id else item.get("URL", "")
+    if not target_url:
+        return None
 
     session = requests.Session()
     session.cookies.set("age_check_done", "1", domain=".dmm.co.jp")
@@ -144,35 +152,48 @@ def fetch_size_from_product_page(item):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     })
 
-    for url in urls_to_try:
-        if not url:
-            continue
-        try:
-            resp = session.get(url, timeout=10, allow_redirects=True)
-            print(f"  商品ページ取得: {resp.url} (status={resp.status_code})")
+    try:
+        resp = session.get(target_url, timeout=10, allow_redirects=True)
+        print(f"  商品ページ取得: {resp.url} (status={resp.status_code})")
 
-            # age_checkにリダイレクトされた場合はrurlから実URLを再取得
-            if "age_check" in resp.url:
-                qs = parse_qs(urlparse(resp.url).query)
-                rurl = qs.get("rurl", [None])[0]
-                if rurl:
-                    resp = session.get(unquote(rurl), timeout=10, allow_redirects=True)
-                    print(f"  age_check後: {resp.url} (status={resp.status_code})")
+        # age_checkにリダイレクトされた場合
+        if "age_check" in resp.url:
+            qs = parse_qs(urlparse(resp.url).query)
+            rurl = qs.get("rurl", [None])[0]
+            if rurl:
+                resp = session.get(unquote(rurl), timeout=10, allow_redirects=True)
+                print(f"  age_check後: {resp.url} (status={resp.status_code})")
 
-            html = resp.text
-            text = re.sub(r'<[^>]+>', ' ', html)
-            text = re.sub(r'&nbsp;', ' ', text)
-            text = re.sub(r'[　\xa0]', ' ', text)
-            text = re.sub(r'\s+', ' ', text)
-            m = re.search(r'T(\d+)\s*B(\d+)\(([A-Za-z]+)\)\s*W(\d+)\s*H(\d+)', text)
-            if m:
-                size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
-                print(f"  サイズ(商品ページ): {size_str}")
-                return size_str
-            else:
-                print(f"  サイズ情報なし（パターン不一致）")
-        except Exception as e:
-            print(f"  商品ページサイズ取得失敗: {e}")
+        html = resp.text
+
+        # __NEXT_DATA__ JSON を解析（Next.js SSR埋め込みデータ）
+        m_next = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+        if m_next:
+            try:
+                next_str = m_next.group(1)
+                # T160 B85(D) W59 H87 形式を直接検索
+                m = re.search(r'T(\d+)\s*B(\d+)\(([A-Za-z]+)\)\s*W(\d+)\s*H(\d+)', next_str)
+                if m:
+                    size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
+                    print(f"  サイズ(__NEXT_DATA__): {size_str}")
+                    return size_str
+                # height/bust/cup/waist/hip の個別フィールドを検索
+                h  = re.search(r'"height"\s*:\s*"?(\d+)"?', next_str)
+                b  = re.search(r'"bust"\s*:\s*"?(\d+)"?', next_str)
+                c  = re.search(r'"cup"\s*:\s*"([A-Za-z]+)"', next_str)
+                w  = re.search(r'"waist"\s*:\s*"?(\d+)"?', next_str)
+                hp = re.search(r'"hip"\s*:\s*"?(\d+)"?', next_str)
+                if h and b and c and w and hp:
+                    size_str = f"T{h.group(1)} B{b.group(1)}({c.group(1)}) W{w.group(1)} H{hp.group(1)}"
+                    print(f"  サイズ(__NEXT_DATA__フィールド): {size_str}")
+                    return size_str
+                print(f"  __NEXT_DATA__にサイズなし")
+            except Exception as e:
+                print(f"  __NEXT_DATA__解析失敗: {e}")
+        else:
+            print(f"  __NEXT_DATA__なし（ログインが必要な可能性あり）")
+    except Exception as e:
+        print(f"  商品ページサイズ取得失敗: {e}")
     return None
 
 def build_title(item):
