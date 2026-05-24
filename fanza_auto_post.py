@@ -147,96 +147,242 @@ def is_valid_description(desc):
             return False
     return True
 
+def _strip_tags(html_fragment):
+    """HTMLタグを除去してテキストのみ返す"""
+    text = re.sub(r'<[^>]+>', ' ', html_fragment)
+    return re.sub(r'\s+', ' ', text).strip()
+
 def fetch_name_and_size_from_detail_page(url, item):
     """
-    FANZA商品ページから女優名とスリーサイズを取得し、タイトル文字列を返す。
-    例: "山田花子 B90 W60 H88"
-    取得できない項目はAPIデータでフォールバック。
+    FANZA商品ページ（video.dmm.co.jp/amateur/content/ 等）から
+    女優名・身長・バスト・カップ・ウエスト・ヒップを取得し
+    "名前 T身長 Bバスト(カップ) Wウエスト Hヒップ" 形式のタイトルを返す。
+    例: "せるぴこ T161 B88(E) W61 H86"
     """
     name = None
-    size = None
+    height = bust = cup = waist = hip = None
 
     try:
-        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        r = requests.get(url, timeout=15, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        })
         html = r.text
 
-        # --- 名前の抽出 ---
-        # パターン1: <th>女優</th> の次の <td> から取得
-        m = re.search(
-            r'<th[^>]*>\s*女優\s*</th>\s*<td[^>]*>(.*?)</td>',
-            html, re.DOTALL | re.IGNORECASE
-        )
-        if m:
-            # タグを除去してテキストのみ抽出
-            raw = re.sub(r'<[^>]+>', ' ', m.group(1))
-            candidate = re.sub(r'\s+', ' ', raw).strip()
-            if candidate:
-                name = candidate
+        # デバッグ用: 身長・サイズ周辺のHTML断片を出力
+        for kw in ["身長", "バスト", "カップ", "ウエスト", "ヒップ", "T1", "B8", "W6", "H8"]:
+            idx = html.find(kw)
+            if idx != -1:
+                print(f"  [{kw}] ...{html[max(0,idx-40):idx+80]}...")
 
-        # パターン2: JSON-LD の name フィールド
-        if not name:
-            m_script = re.search(
-                r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
-                html, re.DOTALL
+        # ===================== 名前の抽出 =====================
+
+        # パターンA: <th>名前</th> or <th>出演者</th> or <th>女優</th> の次の <td>
+        for label in ["名前", "出演者", "女優", "キャスト", "performer"]:
+            m = re.search(
+                rf'<th[^>]*>\s*{label}\s*</th>\s*<td[^>]*>(.*?)</td>',
+                html, re.DOTALL | re.IGNORECASE
             )
-            if m_script:
+            if m:
+                candidate = _strip_tags(m.group(1))
+                if candidate:
+                    name = candidate
+                    break
+
+        # パターンB: data-performer や class="performer" / "actress" 等
+        if not name:
+            m = re.search(
+                r'class="[^"]*(?:performer|actress|cast|name)[^"]*"[^>]*>\s*([^<]{2,30})\s*<',
+                html, re.IGNORECASE
+            )
+            if m:
+                candidate = m.group(1).strip()
+                if candidate and not re.search(r'[<>{]', candidate):
+                    name = candidate
+
+        # パターンC: JSON-LD の actor / performer
+        if not name:
+            for m_script in re.finditer(
+                r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                html, re.DOTALL
+            ):
                 try:
                     jd = json.loads(m_script.group(1))
-                    actors = jd.get("actor", [])
-                    if isinstance(actors, list) and actors:
-                        name = actors[0].get("name", "")
-                    elif isinstance(actors, dict):
-                        name = actors.get("name", "")
+                    for key in ("actor", "performer"):
+                        actors = jd.get(key, [])
+                        if isinstance(actors, dict):
+                            actors = [actors]
+                        if isinstance(actors, list) and actors:
+                            n = actors[0].get("name", "")
+                            if n:
+                                name = n
+                                break
+                    if name:
+                        break
                 except Exception:
                     pass
 
-        # --- サイズの抽出 ---
-        # パターン1: <th>スリーサイズ</th> の次の <td>
-        m2 = re.search(
-            r'<th[^>]*>\s*スリーサイズ\s*</th>\s*<td[^>]*>(.*?)</td>',
+        # パターンD: <h1> や <title> から名前らしき部分
+        if not name:
+            m = re.search(r'<h1[^>]*>([^<]{2,40})</h1>', html)
+            if m:
+                candidate = m.group(1).strip()
+                # 数字だらけや長すぎる場合は除外
+                if candidate and len(candidate) <= 20:
+                    name = candidate
+
+        # ===================== 身長の抽出 =====================
+
+        # パターンA: <th>身長</th> の次の <td>
+        m = re.search(
+            r'<th[^>]*>\s*身長\s*</th>\s*<td[^>]*>(.*?)</td>',
             html, re.DOTALL | re.IGNORECASE
         )
-        if m2:
-            raw2 = re.sub(r'<[^>]+>', ' ', m2.group(1))
-            size_candidate = re.sub(r'\s+', ' ', raw2).strip()
-            if size_candidate:
-                size = size_candidate
+        if m:
+            nums = re.findall(r'\d{2,3}', _strip_tags(m.group(1)))
+            if nums:
+                height = nums[0]
 
-        # パターン2: "B数字・W数字・H数字" や "B数字/W数字/H数字" の形式を直接探す
-        if not size:
-            m3 = re.search(
-                r'B\s*(\d{2,3})\s*[・/\s]\s*W\s*(\d{2,3})\s*[・/\s]\s*H\s*(\d{2,3})',
-                html, re.IGNORECASE
+        # パターンB: "身長：161" / "身長 161" 等
+        if not height:
+            m = re.search(r'身長[^\d]{0,5}(\d{2,3})', html)
+            if m:
+                height = m.group(1)
+
+        # パターンC: "T161" 形式がHTMLに直接存在する
+        if not height:
+            m = re.search(r'\bT(\d{2,3})\b', html)
+            if m:
+                height = m.group(1)
+
+        # ===================== バスト・カップの抽出 =====================
+
+        # パターンA: <th>バスト</th> の次の <td>
+        m = re.search(
+            r'<th[^>]*>\s*バスト\s*</th>\s*<td[^>]*>(.*?)</td>',
+            html, re.DOTALL | re.IGNORECASE
+        )
+        if m:
+            raw = _strip_tags(m.group(1))
+            nums = re.findall(r'\d{2,3}', raw)
+            cups = re.findall(r'\b([A-Z]{1,2})\b', raw)
+            if nums:
+                bust = nums[0]
+            if cups:
+                cup = cups[0]
+
+        # パターンB: カップを別セルで取得
+        if not cup:
+            m = re.search(
+                r'<th[^>]*>\s*カップ\s*</th>\s*<td[^>]*>(.*?)</td>',
+                html, re.DOTALL | re.IGNORECASE
             )
-            if m3:
-                size = f"B{m3.group(1)} W{m3.group(2)} H{m3.group(3)}"
+            if m:
+                raw = _strip_tags(m.group(1))
+                cups = re.findall(r'\b([A-Z]{1,2})\b', raw)
+                if cups:
+                    cup = cups[0]
 
-        # パターン3: バスト/ウエスト/ヒップを個別に持つ場合
-        if not size:
-            mb = re.search(r'バスト[^\d]*(\d{2,3})', html)
-            mw = re.search(r'ウエスト[^\d]*(\d{2,3})', html)
-            mh = re.search(r'ヒップ[^\d]*(\d{2,3})', html)
-            if mb and mw and mh:
-                size = f"B{mb.group(1)} W{mw.group(1)} H{mh.group(1)}"
+        # パターンC: "バスト：88" / "バスト 88" / "B88(E)" 等
+        if not bust:
+            m = re.search(r'バスト[^\d]{0,5}(\d{2,3})', html)
+            if m:
+                bust = m.group(1)
+        if not cup:
+            m = re.search(r'カップ[^A-Z]{0,5}([A-Z]{1,2})', html)
+            if m:
+                cup = m.group(1)
 
-        print(f"  ページから取得 → 名前: {name}, サイズ: {size}")
+        # パターンD: "B88(E)" 形式がHTMLに直接存在する
+        if not bust or not cup:
+            m = re.search(r'\bB(\d{2,3})\(([A-Z]{1,2})\)', html)
+            if m:
+                bust = bust or m.group(1)
+                cup = cup or m.group(2)
+
+        # ===================== ウエストの抽出 =====================
+
+        m = re.search(
+            r'<th[^>]*>\s*ウエスト\s*</th>\s*<td[^>]*>(.*?)</td>',
+            html, re.DOTALL | re.IGNORECASE
+        )
+        if m:
+            nums = re.findall(r'\d{2,3}', _strip_tags(m.group(1)))
+            if nums:
+                waist = nums[0]
+        if not waist:
+            m = re.search(r'ウエスト[^\d]{0,5}(\d{2,3})', html)
+            if m:
+                waist = m.group(1)
+        if not waist:
+            m = re.search(r'\bW(\d{2,3})\b', html)
+            if m:
+                waist = m.group(1)
+
+        # ===================== ヒップの抽出 =====================
+
+        m = re.search(
+            r'<th[^>]*>\s*ヒップ\s*</th>\s*<td[^>]*>(.*?)</td>',
+            html, re.DOTALL | re.IGNORECASE
+        )
+        if m:
+            nums = re.findall(r'\d{2,3}', _strip_tags(m.group(1)))
+            if nums:
+                hip = nums[0]
+        if not hip:
+            m = re.search(r'ヒップ[^\d]{0,5}(\d{2,3})', html)
+            if m:
+                hip = m.group(1)
+        if not hip:
+            # H86 形式: "H" の後に2〜3桁の数字、ただし HTML タグの H で誤検知しないよう word boundary を使用
+            m = re.search(r'\bH(\d{2,3})\b', html)
+            if m:
+                hip = m.group(1)
+
+        # ===================== スリーサイズ一括パターン =====================
+        # "T161 B88(E) W61 H86" 形式がそのまま含まれている場合
+        if not (height and bust and cup and waist and hip):
+            m = re.search(
+                r'T(\d{2,3})\s+B(\d{2,3})\(([A-Z]{1,2})\)\s+W(\d{2,3})\s+H(\d{2,3})',
+                html
+            )
+            if m:
+                height = height or m.group(1)
+                bust   = bust   or m.group(2)
+                cup    = cup    or m.group(3)
+                waist  = waist  or m.group(4)
+                hip    = hip    or m.group(5)
+
+        print(f"  取得結果 → 名前:{name} 身長:{height} バスト:{bust} カップ:{cup} ウエスト:{waist} ヒップ:{hip}")
 
     except Exception as e:
         print(f"名前・サイズ取得失敗: {e}")
 
-    # --- APIデータでフォールバック ---
+    # ===================== APIデータでフォールバック =====================
     if not name:
         ii = item.get("iteminfo", {})
         actresses = [a.get("name") for a in ii.get("actress", []) if a.get("name")]
         if actresses:
             name = actresses[0]
-
     if not name:
         name = item.get("title", "不明")
 
-    # タイトルを組み立て
-    if size:
-        return f"{name} {size}"
+    # ===================== タイトルを組み立て =====================
+    size_parts = []
+    if height:
+        size_parts.append(f"T{height}")
+    if bust and cup:
+        size_parts.append(f"B{bust}({cup})")
+    elif bust:
+        size_parts.append(f"B{bust}")
+    if waist:
+        size_parts.append(f"W{waist}")
+    if hip:
+        size_parts.append(f"H{hip}")
+
+    if size_parts:
+        return f"{name} {' '.join(size_parts)}"
     else:
         return name
 
