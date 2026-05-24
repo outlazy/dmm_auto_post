@@ -147,6 +147,100 @@ def is_valid_description(desc):
             return False
     return True
 
+def fetch_name_and_size_from_detail_page(url, item):
+    """
+    FANZA商品ページから女優名とスリーサイズを取得し、タイトル文字列を返す。
+    例: "山田花子 B90 W60 H88"
+    取得できない項目はAPIデータでフォールバック。
+    """
+    name = None
+    size = None
+
+    try:
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        html = r.text
+
+        # --- 名前の抽出 ---
+        # パターン1: <th>女優</th> の次の <td> から取得
+        m = re.search(
+            r'<th[^>]*>\s*女優\s*</th>\s*<td[^>]*>(.*?)</td>',
+            html, re.DOTALL | re.IGNORECASE
+        )
+        if m:
+            # タグを除去してテキストのみ抽出
+            raw = re.sub(r'<[^>]+>', ' ', m.group(1))
+            candidate = re.sub(r'\s+', ' ', raw).strip()
+            if candidate:
+                name = candidate
+
+        # パターン2: JSON-LD の name フィールド
+        if not name:
+            m_script = re.search(
+                r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
+                html, re.DOTALL
+            )
+            if m_script:
+                try:
+                    jd = json.loads(m_script.group(1))
+                    actors = jd.get("actor", [])
+                    if isinstance(actors, list) and actors:
+                        name = actors[0].get("name", "")
+                    elif isinstance(actors, dict):
+                        name = actors.get("name", "")
+                except Exception:
+                    pass
+
+        # --- サイズの抽出 ---
+        # パターン1: <th>スリーサイズ</th> の次の <td>
+        m2 = re.search(
+            r'<th[^>]*>\s*スリーサイズ\s*</th>\s*<td[^>]*>(.*?)</td>',
+            html, re.DOTALL | re.IGNORECASE
+        )
+        if m2:
+            raw2 = re.sub(r'<[^>]+>', ' ', m2.group(1))
+            size_candidate = re.sub(r'\s+', ' ', raw2).strip()
+            if size_candidate:
+                size = size_candidate
+
+        # パターン2: "B数字・W数字・H数字" や "B数字/W数字/H数字" の形式を直接探す
+        if not size:
+            m3 = re.search(
+                r'B\s*(\d{2,3})\s*[・/\s]\s*W\s*(\d{2,3})\s*[・/\s]\s*H\s*(\d{2,3})',
+                html, re.IGNORECASE
+            )
+            if m3:
+                size = f"B{m3.group(1)} W{m3.group(2)} H{m3.group(3)}"
+
+        # パターン3: バスト/ウエスト/ヒップを個別に持つ場合
+        if not size:
+            mb = re.search(r'バスト[^\d]*(\d{2,3})', html)
+            mw = re.search(r'ウエスト[^\d]*(\d{2,3})', html)
+            mh = re.search(r'ヒップ[^\d]*(\d{2,3})', html)
+            if mb and mw and mh:
+                size = f"B{mb.group(1)} W{mw.group(1)} H{mh.group(1)}"
+
+        print(f"  ページから取得 → 名前: {name}, サイズ: {size}")
+
+    except Exception as e:
+        print(f"名前・サイズ取得失敗: {e}")
+
+    # --- APIデータでフォールバック ---
+    if not name:
+        ii = item.get("iteminfo", {})
+        actresses = [a.get("name") for a in ii.get("actress", []) if a.get("name")]
+        if actresses:
+            name = actresses[0]
+
+    if not name:
+        name = item.get("title", "不明")
+
+    # タイトルを組み立て
+    if size:
+        return f"{name} {size}"
+    else:
+        return name
+
+
 def fetch_description_from_detail_page(url, item):
     """
     商品ページからdescription（metaタグまたはJSON-LD内）だけ抽出し、NG文の場合はAPIの説明にフォールバック
@@ -199,9 +293,12 @@ def create_wp_post(item):
     AFF_ID = get_env('DMM_AFFILIATE_ID')
 
     wp = Client(WP_URL, WP_USER, WP_PASS)
-    title = item["title"]
 
-    # 投稿済みチェック
+    # 商品ページから名前・サイズを取得してタイトルを生成
+    title = fetch_name_and_size_from_detail_page(item["URL"], item)
+    print(f"  生成タイトル: {title}")
+
+    # 投稿済みチェック（生成タイトルで確認）
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
     if any(p.title == title for p in existing):
         print(f"→ 既投稿: {title}（スキップ）")
