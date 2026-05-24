@@ -394,17 +394,56 @@ def fetch_name_and_size_from_detail_page(url, item):
             size_str = f"T{height} B{bust}({cup}) W{waist} H{hip}"
             print(f"  サイズ(iteminfo): {size_str}")
 
+    # ── Step2b: APIのテキストフィールドからサイズ・年齢を抽出 ──
+    # 素人動画はActressSearchにサイズ登録がないことが多いため、
+    # comment/description/story/title フィールドから直接抽出する
+    SIZE_PATTERN = re.compile(
+        r'T(\d{2,3})\s*B(\d{2,3})\(([A-Z]{1,2})\)\s*W(\d{2,3})\s*H(\d{2,3})'
+    )
+    AGE_PATTERN = re.compile(r'(?:年齢[：:　]?\s*|（)(\d{1,2})(?:歳|）|\((\d{1,2})\))')
+
+    text_age = None
+    text_fields = []
+    for key in ("comment", "description", "story", "title"):
+        val = item.get(key) or ""
+        if val:
+            text_fields.append(val)
+    # iteminfo内のフィールドも確認
+    for key in ("comment", "description", "story"):
+        val = ii.get(key) or ""
+        if val:
+            text_fields.append(val)
+
+    for text in text_fields:
+        if not size_str:
+            m = SIZE_PATTERN.search(text)
+            if m:
+                size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
+                print(f"  サイズ(テキスト抽出): {size_str}")
+        if text_age is None:
+            m = AGE_PATTERN.search(text)
+            if m:
+                raw_age = int(m.group(1) or m.group(2))
+                if 18 <= raw_age <= 60:
+                    text_age = raw_age
+                    print(f"  年齢(テキスト抽出): {text_age}")
+        if size_str and text_age is not None:
+            break
+
     # ── Step3: ActressSearch API でプロフィール（サイズ＋年齢）を検索 ──
     # サイズが既にあっても年齢取得のために常に検索する
-    age = None
+    api_age = None
     for candidate in search_candidates:
         profile = search_actress_profile(candidate, API_ID, AFF_ID)
         if profile:
-            age = profile.get("age")
+            api_age = profile.get("age")
             if not size_str:
                 size_str = profile.get("size_str")
-            print(f"  ActressSearch「{candidate}」→ age={age}, size_str={size_str}")
+            print(f"  ActressSearch「{candidate}」→ age={api_age}, size_str={size_str}")
             break  # 見つかったら終了
+
+    # 年齢はActressSearch優先、なければテキスト抽出値を使用
+    age = api_age if api_age is not None else text_age
 
     # ── Step4: 年齢を名前に付加 ──
     # すでに "みなみ(21)" 形式なら age は付けない（二重にならないよう）
