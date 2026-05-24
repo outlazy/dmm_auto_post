@@ -159,8 +159,8 @@ SIZE_PAT = re.compile(r'T(\d{2,3})\s*B(\d{2,3})\(([A-Z]{1,2})\)\s*W(\d{2,3})\s*H
 def fetch_content_data_playwright(content_id):
     """
     Playwright（headless Chromium）で video.dmm.co.jp を描画し、
-    出演者のサイズ・年齢を取得する。
-    戻り値: {"size_str": "T158 B87(G) W58 H85", "age": 27} or None
+    サイズ・説明文を取得する。
+    戻り値: {"size_str": "T158 B87(G) W58 H85", "description": "..."} or None
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -178,15 +178,14 @@ def fetch_content_data_playwright(content_id):
                 locale="ja-JP",
                 extra_http_headers={"Accept-Language": "ja-JP,ja;q=0.9"},
             )
-            # 年齢認証クッキーを事前設定
             context.add_cookies([
-                {"name": "ckcy",  "value": "1",  "domain": ".dmm.co.jp", "path": "/"},
-                {"name": "cklg",  "value": "ja", "domain": ".dmm.co.jp", "path": "/"},
-                {"name": "ckcy",  "value": "1",  "domain": ".dmm.com",   "path": "/"},
+                {"name": "ckcy", "value": "1",  "domain": ".dmm.co.jp", "path": "/"},
+                {"name": "cklg", "value": "ja", "domain": ".dmm.co.jp", "path": "/"},
+                {"name": "ckcy", "value": "1",  "domain": ".dmm.com",   "path": "/"},
             ])
             page = context.new_page()
 
-            # 年齢認証が出た場合に備えて www.dmm.co.jp で先に確認
+            # 年齢認証が出た場合に www.dmm.co.jp で先に確認
             try:
                 page.goto("https://www.dmm.co.jp/", timeout=15000, wait_until="domcontentloaded")
                 btn = page.locator("a:has-text('18歳以上'), button:has-text('18歳以上'), input[value*='18歳']").first
@@ -194,34 +193,50 @@ def fetch_content_data_playwright(content_id):
                     btn.click()
                     page.wait_for_load_state("domcontentloaded", timeout=5000)
             except Exception:
-                pass  # 年齢認証なし or タイムアウトは無視して続行
+                pass
 
-            # コンテンツページへ移動し、JS描画完了まで待機
             page.goto(url, timeout=30000, wait_until="networkidle")
             html = page.content()
+
+            # ── 説明文: CSSセレクタで取得 ──
+            description = None
+            for selector in [
+                "[class*='description']",
+                "[class*='story']",
+                "[class*='detail']",
+                "[class*='content-info']",
+                "[class*='contentsInfo']",
+                "p",
+            ]:
+                try:
+                    texts = page.locator(selector).all_inner_texts()
+                    for t in texts:
+                        t = t.strip()
+                        if len(t) > 100 and "18歳" not in t and "年齢認証" not in t:
+                            description = t
+                            break
+                    if description:
+                        break
+                except Exception:
+                    continue
+
             browser.close()
 
         print(f"  Playwrightページサイズ: {len(html)} bytes")
 
+        result = {}
+
         # ── サイズ抽出 ──
         m = SIZE_PAT.search(html)
-        if not m:
-            print("  Playwright: サイズパターンなし")
-            return None
-        size_str = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
+        if m:
+            result["size_str"] = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
 
-        # ── 年齢抽出（サイズ前後の文脈から (数字) を検索）──
-        age = None
-        ctx_start = max(0, m.start() - 120)
-        ctx = html[ctx_start: m.end() + 30]
-        age_m = re.search(r'\((\d{1,2})\)', ctx)
-        if age_m:
-            raw = int(age_m.group(1))
-            if 18 <= raw <= 60:
-                age = raw
+        if description:
+            print(f"  説明文取得: {description[:80]}...")
+            result["description"] = description
 
-        print(f"  Playwright結果: size_str={size_str}, age={age}")
-        return {"size_str": size_str, "age": age}
+        print(f"  Playwright結果: size_str={result.get('size_str')}, desc={bool(description)}")
+        return result if result else None
 
     except Exception as e:
         print(f"  Playwright失敗: {e}")
@@ -232,7 +247,7 @@ def fetch_content_data_playwright(content_id):
 # タイトル生成（名前 + サイズ）
 # ──────────────────────────────────────────
 
-def build_title(item):
+def build_title(item, **kwargs):
     """
     タイトルを "名前(年齢) T158 B87(G) W58 H85" 形式で返す。
 
@@ -287,16 +302,17 @@ def build_title(item):
             if size_str and age is not None:
                 break
 
-    # ── Step 4: Playwright で video.dmm.co.jp を描画してサイズ・年齢を取得 ──
-    # videoc APIはサイズ・年齢を返さないため、JSレンダリングが必要
+    # ── Step 4: Playwright で video.dmm.co.jp を描画してサイズを取得 ──
+    # videoc APIはサイズを返さないため、JSレンダリングが必要
+    # pw_data は呼び出し元 (create_wp_post) から渡される場合もある
+    pw_data = kwargs.get("pw_data") if kwargs else None
     if not size_str:
-        content_id = item.get("content_id") or item.get("product_id")
-        if content_id:
-            pw_data = fetch_content_data_playwright(content_id)
-            if pw_data:
-                size_str = pw_data.get("size_str")
-                if age is None:
-                    age = pw_data.get("age")
+        if not pw_data:
+            content_id = item.get("content_id") or item.get("product_id")
+            if content_id:
+                pw_data = fetch_content_data_playwright(content_id)
+        if pw_data:
+            size_str = pw_data.get("size_str")
 
     # ── タイトル: 名前 + サイズ（年齢は含めない）──
     display_name = re.sub(r'\(\d+\)', '', name).strip()  # 名前に年齢が混入していれば除去
@@ -389,8 +405,12 @@ def create_wp_post(item):
 
     wp = Client(WP_URL, WP_USER, WP_PASS)
 
-    # タイトル生成
-    title = build_title(item)
+    # Playwrightで商品ページを1回だけ取得（サイズ＋説明文）
+    content_id = item.get("content_id") or item.get("product_id")
+    pw_data = fetch_content_data_playwright(content_id) if content_id else None
+
+    # タイトル生成（Playwrightデータを再利用）
+    title = build_title(item, pw_data=pw_data)
 
     # 投稿済みチェック
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
@@ -435,7 +455,8 @@ def create_wp_post(item):
                 tags.add(entry["name"])
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
-    desc = fetch_description(item)
+    # 説明文: Playwrightで取得できた場合はそれを優先、なければAPIフィールドから
+    desc = (pw_data.get("description") if pw_data else None) or fetch_description(item)
 
     first_url = wp_images[0][1]
     parts = [
