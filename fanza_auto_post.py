@@ -274,15 +274,27 @@ def _parse_sizes_from_html(html):
     return height, bust, cup, waist, hip
 
 def _fetch_html(url):
-    """共通HTTPヘッダーでHTMLを取得する"""
+    """年齢認証クッキー付きでHTMLを取得する"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.dmm.co.jp/",
     }
-    r = requests.get(url, timeout=15, headers=headers)
+    # FANZA年齢認証バイパス用クッキー
+    cookies = {
+        "ckcy": "1",          # 年齢確認済み
+        "cklg": "ja",         # 言語
+        "age_check_done": "1",
+        "dmmtoolbar_disp": "1",
+    }
+    r = requests.get(url, timeout=15, headers=headers, cookies=cookies)
     r.raise_for_status()
-    return r.text
+    html = r.text
+    # 年齢認証ページが返ってきていないか確認
+    if "年齢認証" in html[:500] and len(html) < 5000:
+        print(f"  警告: 年齢認証ページが返されました ({url})")
+    return html
 
 def _calc_age(birthday_str):
     """
@@ -299,6 +311,32 @@ def _calc_age(birthday_str):
         return age
     except Exception:
         return None
+
+
+def fetch_item_by_cid(cid, api_id, aff_id):
+    """
+    FANZA ItemList API で CID を指定して商品1件の詳細データを取得する。
+    comment フィールドなどに出演者情報が含まれていることがある。
+    """
+    try:
+        params = {
+            "api_id": api_id,
+            "affiliate_id": aff_id,
+            "site": "FANZA",
+            "service": "digital",
+            "floor": "videoc",
+            "cid": cid,
+            "output": "json",
+        }
+        resp = requests.get(DMM_API_URL, params=params, timeout=10)
+        resp.raise_for_status()
+        items = resp.json().get("result", {}).get("items", [])
+        if items:
+            print(f"  CID取得成功: {cid}, comment={str(items[0].get('comment',''))[:100]}")
+            return items[0]
+    except Exception as e:
+        print(f"  CID取得失敗: {e}")
+    return None
 
 
 def search_actress_profile(name, api_id, aff_id):
@@ -473,6 +511,14 @@ def fetch_name_and_size_from_detail_page(url, item):
             val = ii.get(key) or ""
             if val:
                 text_fields.append(val)
+        # CID指定でAPI再取得して comment フィールドも確認
+        if cid and (not size_str or page_age is None):
+            cid_item = fetch_item_by_cid(cid, API_ID, AFF_ID)
+            if cid_item:
+                for key in ("comment", "description", "story"):
+                    val = cid_item.get(key) or ""
+                    if val and val not in text_fields:
+                        text_fields.append(val)
         for text in text_fields:
             if not size_str:
                 m = SIZE_PATTERN.search(text)
