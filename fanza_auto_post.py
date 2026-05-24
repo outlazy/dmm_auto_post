@@ -3,16 +3,14 @@
 
 """
 FANZA（DMM）アフィリエイトAPIで素人動画（floor=videoc）を自動取得→WordPress投稿
-・日本時間（JST）で動作
 ・サンプル画像は全てWordPressにアップロードし、直リンクは使用しない
-・タイトル取得順: item["title"] → iteminfo.actress → ActressSearch API → 名前のみ
+・タイトル: item["title"] → iteminfo.actress → ActressSearch API → 名前のみ
 ・ジャンルに「熟女」が含まれる場合は必ずスキップ
-・config.yml等の設定ファイル不要、全て環境変数（GitHub Secrets等）で管理
+・全て環境変数（GitHub Secrets）で管理
 """
 
 import os
 import re
-import json
 import requests
 from datetime import datetime, date
 import pytz
@@ -21,22 +19,11 @@ from wordpress_xmlrpc.methods import media, posts
 from wordpress_xmlrpc.methods.posts import GetPosts
 from wordpress_xmlrpc.compat import xmlrpc_client
 
-DMM_API_URL = "https://api.dmm.com/affiliate/v3/ItemList"
+DMM_API_URL      = "https://api.dmm.com/affiliate/v3/ItemList"
 ACTRESS_SEARCH_URL = "https://api.dmm.com/affiliate/v3/ActressSearch"
 
-NG_DESCRIPTIONS = [
-    "From here on, it will be an adult site",
-    "18歳未満",
-    "アダルト商品を取り扱う",
-    "未成年",
-    "成人向け",
-    "アダルトサイト",
-    "ご利用は18歳以上",
-    "18才未満",
-]
-
 # ──────────────────────────────────────────
-# 基本ユーティリティ
+# ユーティリティ
 # ──────────────────────────────────────────
 
 def now_jst():
@@ -49,7 +36,6 @@ def get_env(key, required=True, default=None):
     return val
 
 def _calc_age(birthday_str):
-    """'YYYY-MM-DD' 形式の誕生日から現在年齢を返す。取得不可なら None。"""
     try:
         bday = date.fromisoformat(birthday_str[:10])
         today = date.today()
@@ -58,7 +44,7 @@ def _calc_age(birthday_str):
         return None
 
 # ──────────────────────────────────────────
-# DMM API 取得
+# DMM API
 # ──────────────────────────────────────────
 
 def fetch_amateur_videos():
@@ -80,27 +66,13 @@ def fetch_amateur_videos():
     except Exception:
         print("---- DMM API Error ----")
         print(resp.text)
-        print("----------------------")
         raise
-
     items = resp.json().get("result", {}).get("items", [])
     print(f"API取得件数: {len(items)}")
-    for item in items:
-        print("==== APIアイテム全体 ====")
-        print(item)
-        siu = item.get("sampleImageURL", {})
-        if "sample_l" in siu and "image" in siu["sample_l"]:
-            print("sample_l images:", siu["sample_l"]["image"])
-        if "sample_s" in siu and "image" in siu["sample_s"]:
-            print("sample_s images:", siu["sample_s"]["image"])
     return items
 
 def search_actress_profile(name, api_id, aff_id):
-    """
-    ActressSearch API で名前を検索し
-    {"size_str": "T158 B87(G) W58 H85", "age": 21} を返す。
-    見つからない・データなしなら None。
-    """
+    """ActressSearch APIで名前を検索し {"size_str": ..., "age": ...} を返す。"""
     try:
         params = {
             "api_id": api_id,
@@ -131,7 +103,7 @@ def search_actress_profile(name, api_id, aff_id):
     return None
 
 # ──────────────────────────────────────────
-# フィルタリング
+# フィルタ
 # ──────────────────────────────────────────
 
 def is_released(item):
@@ -151,231 +123,58 @@ def contains_jukujo(item):
     return "熟女" in genres
 
 # ──────────────────────────────────────────
-# Playwrightで JS描画ページからサイズ・年齢を取得
+# タイトル生成
 # ──────────────────────────────────────────
 
-SIZE_PAT = re.compile(r'T(\d{2,3})\s*B(\d{2,3})\(([A-Z]{1,2})\)\s*W(\d{2,3})\s*H(\d{2,3})')
-
-def fetch_content_data_playwright(content_id):
+def build_title(item):
     """
-    Playwright（headless Chromium）で video.dmm.co.jp を描画し、
-    サイズ・説明文を取得する。
-    戻り値: {"size_str": "T158 B87(G) W58 H85", "description": "..."} or None
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-        url = f"https://video.dmm.co.jp/amateur/content/?id={content_id}"
-        print(f"  Playwright起動: {url}")
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-            )
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
-                locale="ja-JP",
-                extra_http_headers={"Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8"},
-            )
-            page = context.new_page()
-
-            # ── Step1: DMMアカウントにログイン ──
-            DMM_EMAIL = get_env("DMM_EMAIL", required=False, default="")
-            DMM_PASS  = get_env("DMM_PASS",  required=False, default="")
-            if DMM_EMAIL and DMM_PASS:
-                try:
-                    print("  DMMログイン試行...")
-                    page.goto(
-                        "https://accounts.dmm.co.jp/service/login/password",
-                        timeout=20000, wait_until="domcontentloaded"
-                    )
-                    page.fill("input[name='login_id']",  DMM_EMAIL)
-                    page.fill("input[name='password']", DMM_PASS)
-                    page.click("button[type='submit'], input[type='submit']")
-                    page.wait_for_load_state("networkidle", timeout=20000)
-                    print(f"  ログイン後URL: {page.url}")
-                except Exception as e:
-                    print(f"  DMMログイン失敗（続行）: {e}")
-            else:
-                print("  DMM_EMAIL/DMM_PASS未設定 → ログインなしで試行")
-
-            # ── Step2: コンテンツページへ移動 ──
-            page.goto(url, timeout=30000, wait_until="networkidle")
-            try:
-                page.wait_for_timeout(2000)  # JS描画の追加待機
-            except Exception:
-                pass
-            html = page.content()
-            print(f"  Playwrightページサイズ: {len(html)} bytes")
-            print(f"  HTML冒頭300文字: {html[:300].replace(chr(10), ' ')}")
-
-            # ── Step3: __NEXT_DATA__ から JSON でデータ取得 ──
-            next_data = None
-            nd_match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.+?)</script>', html, re.DOTALL)
-            if nd_match:
-                try:
-                    next_data = json.loads(nd_match.group(1))
-                    nd_str = json.dumps(next_data, ensure_ascii=False)
-                    print(f"  __NEXT_DATA__ 取得成功 ({len(nd_str)} chars)")
-                    # サイズパターンが含まれるか確認
-                    if SIZE_PAT.search(nd_str):
-                        print("  → __NEXT_DATA__にサイズあり")
-                    else:
-                        print("  → __NEXT_DATA__にサイズなし")
-                    # props.pageProps 配下のキー一覧を表示
-                    pp = next_data.get("props", {}).get("pageProps", {})
-                    print(f"  pagePropsキー: {list(pp.keys())[:10]}")
-                    # 最初の1000文字を表示
-                    print(f"  __NEXT_DATA__冒頭: {nd_str[:500]}")
-                except Exception as e:
-                    print(f"  __NEXT_DATA__パース失敗: {e}")
-
-            # ── Step4: 説明文をCSSセレクタで取得 ──
-            description = None
-            for selector in [
-                "[class*='description']",
-                "[class*='story']",
-                "[class*='detail']",
-                "[class*='comment']",
-                "[class*='text']",
-                "p",
-            ]:
-                try:
-                    texts = page.locator(selector).all_inner_texts()
-                    for t in texts:
-                        t = t.strip()
-                        if len(t) > 80 and "18歳" not in t and "年齢認証" not in t and "cookie" not in t.lower():
-                            description = t
-                            break
-                    if description:
-                        break
-                except Exception:
-                    continue
-
-            browser.close()
-
-        result = {}
-
-        # ── __NEXT_DATA__ から description を探す ──
-        if next_data and not description:
-            def _find_key(obj, keys):
-                if isinstance(obj, dict):
-                    for k, v in obj.items():
-                        if k in keys and isinstance(v, str) and len(v) > 80:
-                            return v
-                        found = _find_key(v, keys)
-                        if found:
-                            return found
-                elif isinstance(obj, list):
-                    for v in obj:
-                        found = _find_key(v, keys)
-                        if found:
-                            return found
-                return None
-            description = _find_key(next_data, ("description", "story", "comment", "body"))
-
-        # ── サイズ抽出 ──
-        m = SIZE_PAT.search(html)
-        if m:
-            result["size_str"] = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
-        elif next_data:
-            nd_str = json.dumps(next_data, ensure_ascii=False)
-            m = SIZE_PAT.search(nd_str)
-            if m:
-                result["size_str"] = f"T{m.group(1)} B{m.group(2)}({m.group(3)}) W{m.group(4)} H{m.group(5)}"
-
-        if description:
-            desc_clean = description.strip()
-            if is_valid_description(desc_clean):
-                print(f"  説明文取得: {desc_clean[:80]}...")
-                result["description"] = desc_clean
-
-        print(f"  Playwright結果: size_str={result.get('size_str')}, desc={bool(result.get('description'))}")
-        return result if result else None
-
-    except Exception as e:
-        print(f"  Playwright失敗: {e}")
-        return None
-
-
-# ──────────────────────────────────────────
-# タイトル生成（名前 + サイズ）
-# ──────────────────────────────────────────
-
-def build_title(item, **kwargs):
-    """
-    タイトルを "名前(年齢) T158 B87(G) W58 H85" 形式で返す。
-
+    "名前 T158 B87(G) W58 H85" 形式のタイトルを返す。
     取得順:
-      1. item["title"]                → 名前
-      2. iteminfo.actress[0]          → サイズ・年齢（APIに入っていれば）
-      3. ActressSearch API（名前で検索）→ サイズ・年齢
-      4. 年齢除去して再検索            → "キミカ(27)" → "キミカ"
-      ※ どこにも登録がなければ名前のみ
+      1. item["title"]         → 名前
+      2. iteminfo.actress[0]   → サイズ
+      3. ActressSearch API     → サイズ（名前で検索）
+      ※ サイズが取れなければ名前のみ
     """
     API_ID = get_env("DMM_API_ID")
     AFF_ID = get_env("DMM_AFFILIATE_ID")
     ii = item.get("iteminfo", {})
 
-    # ── Step 1: 名前 ──
+    # Step 1: 名前
     name = item.get("title", "").strip()
     if not name:
         actresses = [a.get("name") for a in ii.get("actress", []) if a.get("name")]
         name = actresses[0] if actresses else "不明"
     print(f"  名前(APIタイトル): {name}")
+    display_name = re.sub(r'\(\d+\)', '', name).strip()
 
-    # ── Step 2: iteminfo.actress[0] のサイズフィールド ──
+    # Step 2: iteminfo.actress[0] のサイズ
     size_str = None
-    age = None
     if ii.get("actress"):
         a = ii["actress"][0]
-        height   = str(a.get("height",   "") or "").strip()
-        bust     = str(a.get("bust",     "") or "").strip()
-        cup      = str(a.get("cup",      "") or "").strip()
-        waist    = str(a.get("waist",    "") or "").strip()
-        hip      = str(a.get("hip",      "") or "").strip()
-        birthday = str(a.get("birthday", "") or "").strip()
-        print(f"  iteminfo.actress[0]: h={height} b={bust} c={cup} w={waist} hip={hip} bday={birthday}")
-        if height and bust and cup and waist and hip:
-            size_str = f"T{height} B{bust}({cup}) W{waist} H{hip}"
+        h = str(a.get("height", "") or "").strip()
+        b = str(a.get("bust",   "") or "").strip()
+        c = str(a.get("cup",    "") or "").strip()
+        w = str(a.get("waist",  "") or "").strip()
+        hip = str(a.get("hip",  "") or "").strip()
+        if h and b and c and w and hip:
+            size_str = f"T{h} B{b}({c}) W{w} H{hip}"
             print(f"  サイズ(iteminfo): {size_str}")
-        if birthday:
-            age = _calc_age(birthday)
 
-    # ── Step 3 & 4: ActressSearch API ──
-    if not size_str or age is None:
+    # Step 3: ActressSearch API
+    if not size_str:
         base_name = re.sub(r'\(\d+\)', '', name).strip()
-        candidates = list(dict.fromkeys([base_name, name]))
-        for candidate in candidates:
+        for candidate in list(dict.fromkeys([base_name, name])):
             profile = search_actress_profile(candidate, API_ID, AFF_ID)
-            if not profile:
-                continue
-            if not size_str and profile.get("size_str"):
+            if profile and profile.get("size_str"):
                 size_str = profile["size_str"]
-            if age is None and profile.get("age") is not None:
-                age = profile["age"]
-            if size_str and age is not None:
                 break
-
-    # ── Step 4: Playwright で video.dmm.co.jp を描画してサイズを取得 ──
-    # pw_data は呼び出し元 (create_wp_post) から渡される（二重起動防止）
-    pw_data = kwargs.get("pw_data") if kwargs else None
-    if not size_str and pw_data:
-        size_str = pw_data.get("size_str")
-
-    # ── タイトル: 名前 + サイズ（年齢は含めない）──
-    display_name = re.sub(r'\(\d+\)', '', name).strip()  # 名前に年齢が混入していれば除去
 
     result = f"{display_name} {size_str}" if size_str else display_name
     print(f"  生成タイトル: {result}")
     return result
 
 # ──────────────────────────────────────────
-# アフィリエイトリンク・画像
+# 画像・リンク
 # ──────────────────────────────────────────
 
 def make_affiliate_link(url, aff_id):
@@ -386,10 +185,6 @@ def make_affiliate_link(url, aff_id):
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, urlencode(qs), parsed.fragment))
 
 def upload_image(wp, url):
-    """
-    画像をダウンロードしてWordPressにアップロード。
-    戻り値: (media_id, wp_url)。失敗時は (None, None)。
-    """
     try:
         resp = requests.get(url, timeout=15)
         resp.raise_for_status()
@@ -405,45 +200,16 @@ def upload_image(wp, url):
         if isinstance(res, dict):
             wp_url = res.get("url") or res.get("link") or res.get("guid")
         if not wp_url:
-            print(f"  警告: wp_urlが取得できませんでした。レスポンス: {res}")
+            print(f"  警告: wp_urlが取得できませんでした。")
             return None, None
         if any(d in wp_url for d in ("dmm.co.jp", "dmm.com", "fanza")):
-            print(f"  エラー: FANZAドメインのURLが返されました（スキップ）: {wp_url}")
+            print(f"  エラー: FANZAドメインのURLが返されました（スキップ）")
             return None, None
         print(f"  アップロード成功: {name} → {wp_url}")
         return media_id, wp_url
     except Exception as e:
         print(f"画像アップロード失敗: {url} ({e})")
         return None, None
-
-# ──────────────────────────────────────────
-# 本文の説明文取得
-# ──────────────────────────────────────────
-
-def is_valid_description(desc):
-    if not desc or len(desc) < 30:
-        return False
-    return not any(ng in desc for ng in NG_DESCRIPTIONS)
-
-def fetch_description(item):
-    """
-    本文説明文を取得する。
-    APIの comment / description / story フィールドを確認し、
-    なければ自動生成する。
-    """
-    ii = item.get("iteminfo", {})
-    for key in ("comment", "description", "story"):
-        val = item.get(key) or ii.get(key)
-        if is_valid_description(val):
-            return val
-
-    # 自動生成
-    cast   = "、".join([a["name"] for a in ii.get("actress", []) if "name" in a])
-    label  = "、".join([l["name"] for l in ii.get("label",   []) if "name" in l])
-    genres = "、".join([g["name"] for g in ii.get("genre",   []) if "name" in g])
-    volume = item.get("volume", "")
-    base   = f"{item.get('title','')}。ジャンル：{genres}。出演：{cast}。レーベル：{label}。収録時間：{volume}。"
-    return base if len(base) > 10 else "FANZA（DMM）素人動画の自動投稿です。"
 
 # ──────────────────────────────────────────
 # WordPress 投稿
@@ -457,13 +223,7 @@ def create_wp_post(item):
     AFF_ID   = get_env('DMM_AFFILIATE_ID')
 
     wp = Client(WP_URL, WP_USER, WP_PASS)
-
-    # Playwrightで商品ページを1回だけ取得（サイズ＋説明文）
-    content_id = item.get("content_id") or item.get("product_id")
-    pw_data = fetch_content_data_playwright(content_id) if content_id else None
-
-    # タイトル生成（Playwrightデータを再利用）
-    title = build_title(item, pw_data=pw_data)
+    title = build_title(item)
 
     # 投稿済みチェック
     existing = wp.call(GetPosts({"post_status": "publish", "s": title}))
@@ -478,28 +238,23 @@ def create_wp_post(item):
         fanza_images = siu["sample_l"]["image"]
     elif "sample_s" in siu and "image" in siu["sample_s"]:
         fanza_images = siu["sample_s"]["image"]
-
     if not fanza_images:
         print(f"→ サンプル画像なし: {title}（スキップ）")
         return False
 
-    # WordPressにアップロード
     print(f"  サンプル画像 {len(fanza_images)} 枚をアップロード中...")
     wp_images = []
-    for fanza_url in fanza_images:
-        mid, wp_url = upload_image(wp, fanza_url)
+    for furl in fanza_images:
+        mid, wp_url = upload_image(wp, furl)
         if wp_url:
             wp_images.append((mid, wp_url))
-        else:
-            print(f"  ↳ スキップ: {fanza_url}")
-
     if not wp_images:
         print(f"→ 画像アップロード全失敗: {title}（スキップ）")
         return False
 
     thumb_id = wp_images[0][0]
 
-    # タグ（レーベル・メーカー・女優・ジャンル）
+    # タグ
     tags = set()
     ii = item.get("iteminfo", {})
     for group in ("label", "maker", "actress", "genre"):
@@ -508,8 +263,8 @@ def create_wp_post(item):
                 tags.add(entry["name"])
 
     aff_link = make_affiliate_link(item["URL"], AFF_ID)
-
     first_url = wp_images[0][1]
+
     parts = [
         f'<p><a href="{aff_link}" target="_blank"><img src="{first_url}" alt="{title}"></a></p>',
         f'<p><a href="{aff_link}" target="_blank">{title}</a></p>',
@@ -550,7 +305,7 @@ def main():
                 continue
             if create_wp_post(item):
                 posted = True
-                break  # 1件投稿で終了
+                break
         if not posted:
             print("新規投稿なし")
     except Exception as e:
