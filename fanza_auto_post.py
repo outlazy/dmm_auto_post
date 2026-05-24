@@ -185,18 +185,28 @@ def fetch_content_data_playwright(content_id):
             ])
             page = context.new_page()
 
-            # 年齢認証が出た場合に www.dmm.co.jp で先に確認
+            # www.dmm.co.jp にアクセスしてJSで年齢認証クッキーをセット
             try:
-                page.goto("https://www.dmm.co.jp/", timeout=15000, wait_until="domcontentloaded")
-                btn = page.locator("a:has-text('18歳以上'), button:has-text('18歳以上'), input[value*='18歳']").first
-                if btn.is_visible(timeout=3000):
-                    btn.click()
-                    page.wait_for_load_state("domcontentloaded", timeout=5000)
+                page.goto("https://www.dmm.co.jp/digital/videoc/", timeout=15000, wait_until="domcontentloaded")
+                page.evaluate("""
+                    document.cookie = 'ckcy=1; domain=.dmm.co.jp; path=/; max-age=31536000';
+                    document.cookie = 'cklg=ja; domain=.dmm.co.jp; path=/; max-age=31536000';
+                    document.cookie = 'ckcy=1; domain=.dmm.com; path=/; max-age=31536000';
+                """)
+            except Exception as e:
+                print(f"  年齢認証事前セット失敗（続行）: {e}")
+
+            # コンテンツページに移動
+            page.goto(url, timeout=30000, wait_until="networkidle")
+            # JS描画完了を少し待つ
+            try:
+                page.wait_for_selector("h1, [class*='title'], [class*='performer']", timeout=8000)
             except Exception:
                 pass
-
-            page.goto(url, timeout=30000, wait_until="networkidle")
             html = page.content()
+
+            # デバッグ: 最初の500文字を表示（年齢認証ページかどうか確認）
+            print(f"  HTML冒頭: {html[:300].replace(chr(10),' ')}")
 
             # ── 説明文: CSSセレクタで取得 ──
             description = None
@@ -206,6 +216,7 @@ def fetch_content_data_playwright(content_id):
                 "[class*='detail']",
                 "[class*='content-info']",
                 "[class*='contentsInfo']",
+                "[class*='text']",
                 "p",
             ]:
                 try:
@@ -303,16 +314,10 @@ def build_title(item, **kwargs):
                 break
 
     # ── Step 4: Playwright で video.dmm.co.jp を描画してサイズを取得 ──
-    # videoc APIはサイズを返さないため、JSレンダリングが必要
-    # pw_data は呼び出し元 (create_wp_post) から渡される場合もある
+    # pw_data は呼び出し元 (create_wp_post) から渡される（二重起動防止）
     pw_data = kwargs.get("pw_data") if kwargs else None
-    if not size_str:
-        if not pw_data:
-            content_id = item.get("content_id") or item.get("product_id")
-            if content_id:
-                pw_data = fetch_content_data_playwright(content_id)
-        if pw_data:
-            size_str = pw_data.get("size_str")
+    if not size_str and pw_data:
+        size_str = pw_data.get("size_str")
 
     # ── タイトル: 名前 + サイズ（年齢は含めない）──
     display_name = re.sub(r'\(\d+\)', '', name).strip()  # 名前に年齢が混入していれば除去
