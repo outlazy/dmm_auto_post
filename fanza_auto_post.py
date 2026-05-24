@@ -183,28 +183,25 @@ def fetch_content_data_playwright(content_id):
             )
             page = context.new_page()
 
-            # ── Step1: www.dmm.co.jp でJSクッキーをセット ──
-            try:
-                page.goto("https://www.dmm.co.jp/", timeout=20000, wait_until="domcontentloaded")
-                page.evaluate("""() => {
-                    const d = '.dmm.co.jp';
-                    const opts = `; domain=${d}; path=/; max-age=31536000`;
-                    document.cookie = 'ckcy=1' + opts;
-                    document.cookie = 'cklg=ja' + opts;
-                    document.cookie = 'age_check_done=1' + opts;
-                }""")
-                # 年齢認証ボタンがあればクリック
-                for sel in ["text=18歳以上", "text=はい", "[href*='age_check']", "button[type='submit']"]:
-                    try:
-                        loc = page.locator(sel).first
-                        if loc.is_visible(timeout=2000):
-                            loc.click()
-                            page.wait_for_load_state("domcontentloaded", timeout=5000)
-                            break
-                    except Exception:
-                        continue
-            except Exception as e:
-                print(f"  www.dmm.co.jp準備失敗（続行）: {e}")
+            # ── Step1: DMMアカウントにログイン ──
+            DMM_EMAIL = get_env("DMM_EMAIL", required=False, default="")
+            DMM_PASS  = get_env("DMM_PASS",  required=False, default="")
+            if DMM_EMAIL and DMM_PASS:
+                try:
+                    print("  DMMログイン試行...")
+                    page.goto(
+                        "https://accounts.dmm.co.jp/service/login/password",
+                        timeout=20000, wait_until="domcontentloaded"
+                    )
+                    page.fill("input[name='login_id']",  DMM_EMAIL)
+                    page.fill("input[name='password']", DMM_PASS)
+                    page.click("button[type='submit'], input[type='submit']")
+                    page.wait_for_load_state("networkidle", timeout=20000)
+                    print(f"  ログイン後URL: {page.url}")
+                except Exception as e:
+                    print(f"  DMMログイン失敗（続行）: {e}")
+            else:
+                print("  DMM_EMAIL/DMM_PASS未設定 → ログインなしで試行")
 
             # ── Step2: コンテンツページへ移動 ──
             page.goto(url, timeout=30000, wait_until="networkidle")
